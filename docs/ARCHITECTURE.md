@@ -26,8 +26,9 @@
                   Outfit composition
 ```
 
-Two adapters, both behind interfaces: vision (garment extraction) and text (ranking).
-The VTO adapter and the commerce adapter are gone — see `docs/DECISIONS.md` (2026-09-12).
+Three adapters, all behind interfaces: vision (garment extraction), advisory (the agent
+crew), and trend (sourced, dated trend input). The VTO and commerce adapters are gone.
+See `docs/DECISIONS.md` (2026-09-12).
 
 ## 2. Groq AI architecture
 
@@ -37,9 +38,12 @@ The VTO adapter and the commerce adapter are gone — see `docs/DECISIONS.md` (2
 - default candidate: `openai/gpt-oss-120b`
 - purpose: outfit ranking, rationale, gap naming
 
-`GROQ_VISION_MODEL`
+`GROQ_VISION_MODEL` — `qwen/qwen3.8-27b`
 - purpose: garment extraction from user photos — the product's primary AI path
-- default is contested; resolve before S5 (`docs/DECISIONS.md`, open entry)
+
+`GROQ_VISION_FALLBACK_MODEL` — `qwen/qwen3.6-27b`
+- purpose: availability only. Provider error, rate limit, timeout, or an ID that no
+  longer resolves. Never triggered by low confidence.
 
 Model IDs are configuration. They appear in `.env.example` and the adapter config, and
 nowhere else.
@@ -65,20 +69,24 @@ interface WardrobeAnalyzer {
   analyze(input: GarmentImage): Promise<GarmentExtraction>
 }
 
-interface OutfitRanker {
-  rank(input: RankRequest): Promise<RankedOutfit>
+interface OutfitAdvisor {
+  advise(input: AdviceRequest): Promise<OutfitAdvice>
+}
+
+interface TrendSource {
+  current(input: TrendQuery): Promise<TrendNote[]>   // each carries source + published_at
 }
 ```
 
 Implementations:
-- `GroqWardrobeAnalyzer` / `GroqOutfitRanker` — live
-- `DeterministicWardrobeAnalyzer` / `DeterministicRanker` — `APP_MODE=demo`, no credentials
+- `GroqWardrobeAnalyzer` — live, with the vision fallback chain
+- `CrewAIOutfitAdvisor` — the agent crew (`docs/AGENT-SYSTEM.md`)
+- `DeterministicRanker` — degradation step, not a product mode
+- `CorpusTrendSource` (default, `data/trends/`) · `WebTrendSource` (opt-in)
+- stub implementations in `tests/ai/` — test doubles only; the running app never reaches them
 
-The demo analyzer measures colour and quality from actual pixels and takes category from
-the user's upload selection; it does not fabricate fields. See `docs/AI-SYSTEM.md`.
-
-The domain layer must not be able to tell which implementation it holds. `git grep -i groq`
-outside the adapter directory returning nothing is the check.
+The domain layer must not be able to tell which implementation it holds. Two greps,
+both returning nothing outside `adapters/`: `git grep -i groq` and `git grep -i crewai`.
 
 ## 4. Image input
 
@@ -109,12 +117,17 @@ One bad image fails one job. It must never fail the batch.
 1. normalise style preferences
 2. **retrieve candidates with `WHERE user_id = :user AND status = 'ready'`**
 3. deterministic prefilter by role and compatibility
-4. ask the text model to rank the retrieved set
-5. validate structured output
-6. **re-validate every returned ID against the retrieved set and the same `user_id`**
-7. deterministic final score
-8. detect unfilled roles → report the gap rather than filling it
-9. persist
+4. fetch dated trend notes from `TrendSource` (parallel with step 3)
+5. run the agent crew over the retrieved set (`docs/AGENT-SYSTEM.md`)
+6. validate structured output
+7. **re-validate every returned ID against the retrieved set and the same `user_id`**
+8. drop unattributed trend notes and unsupportable tips
+9. deterministic final score
+10. detect unfilled roles → report the gap rather than filling it
+11. persist
+
+Steps 5 and 7 are separated on purpose: no amount of agent deliberation substitutes for
+the ownership check, and a Critic agent that approved a response is not evidence.
 
 Step 2 and step 6 are the grounding guarantee. Neither may be replaced by prompt wording.
 
@@ -132,8 +145,12 @@ Frontend: polling for MVP, SSE later.
 
 ## 8. Reliability
 
-provider timeout · bounded retry · exponential backoff · idempotency keys · circuit
-breaking where useful · partial-batch success · explicit error codes
+provider timeout · bounded retry · exponential backoff · idempotency keys ·
+**vision model fallback chain** · **agent latency circuit breaker (8s p50 / 15s p95)** ·
+partial-batch success · explicit error codes
+
+There is no offline path. A missing or invalid `GROQ_API_KEY` fails loudly at boot
+alongside the model-availability check, never silently into a stub.
 
 No curated fallback outfit — a fallback made of unowned garments would violate the
 grounding rule. Degrade to the deterministic ranker over the same wardrobe, then to an
@@ -141,8 +158,10 @@ honest statement of the gap.
 
 ## 9. Observability
 
-Record: request ID · job ID · provider · model · duration · token usage · retry count ·
-status · error class · extraction confidence · correction events.
+Record: request ID · job ID · provider · model · **model fallback activations** ·
+**per-agent latency and tokens** · **crew degradation level** · duration · token usage ·
+retry count · status · error class · extraction confidence · correction events ·
+**trend corpus age at time of use**.
 
 Do not record: raw image content · secrets · inferences about the person in a photo.
 

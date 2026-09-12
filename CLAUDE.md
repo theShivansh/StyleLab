@@ -23,7 +23,7 @@ Optimize for a polished end-to-end demo, not maximal feature count.
 9. Respect reduced motion and keyboard accessibility.
 10. Run targeted checks before declaring work complete.
 11. Update docs when architecture or behavior materially changes.
-12. Keep demo mode working without paid APIs — the deterministic analyzer, not seeded data.
+12. Never let the running app fall back to a test double — there is no demo mode.
 
 ## Product rules
 
@@ -189,25 +189,69 @@ When a requirement is ambiguous:
 
 Default provider: **Groq**. Config is read from environment, never hardcoded:
 
-- `GROQ_TEXT_MODEL` — default `openai/gpt-oss-120b` (orchestration, ranking, rationale)
-- `GROQ_VISION_MODEL` — default `qwen/qwen3.6-27b` (image understanding)
+- `GROQ_TEXT_MODEL` — `openai/gpt-oss-120b` (orchestration, agents, ranking, rationale)
+- `GROQ_VISION_MODEL` — `qwen/qwen3.8-27b` (garment extraction)
+- `GROQ_VISION_FALLBACK_MODEL` — `qwen/qwen3.6-27b`
 
-`qwen/qwen3.8-27b` is the newer, stronger, ~33% pricier sibling. Both are live on
-Groq and both accept images. Default to `3.6` for cost; `3.8` is a one-line env
-change for quality comparison. Groq's multimodal lineup rotates fast and it has
-deprecated models on ~weeks of notice, so:
+Vision is the product's front door, so extraction quality is worth the ~33% premium of
+3.8. The fallback exists for availability — deprecation, rate limits, provider errors —
+**not for quality**. A low-confidence extraction from 3.8 is a confidence signal to
+surface to the user, never a reason to retry on 3.6.
 
+Rules:
 - Model IDs appear in exactly two places: `.env.example` and the adapter config.
-- On startup in production mode, verify the configured model IDs against Groq's
-  model list and fail loudly at boot, not at first user request.
-- Never let a model ID string appear in a React component, a route handler, or a
-  prompt template.
+- Verify configured model IDs against Groq's model list at boot and fail loudly there,
+  not at a user's first request. Groq deprecates models on weeks of notice.
+- Never let a model ID string appear in a React component, a route handler, or a prompt
+  template.
+- Never expose `GROQ_API_KEY` to the browser.
 
-Never expose `GROQ_API_KEY` to the browser. CI must pass with it unset.
+**There is no demo mode.** The application requires a real key and always performs real
+inference. `tests/ai/` and CI use stub adapters — those are test doubles for an external
+dependency, not a product path, and nothing in the running app may fall back to them.
 
-Prefer Structured Outputs / JSON Schema with `additionalProperties: false` and
-explicit enums. Schema validity is not business validity — catalogue validation
-still runs after it, always.
+Prefer Structured Outputs / JSON Schema with `additionalProperties: false` and explicit
+enums. Schema validity is not business validity, and neither is authorisation —
+catalogue and ownership validation still run after it, always.
+
+## Agent rules
+
+Outfit advice comes from a crew of specialist agents behind the `OutfitAdvisor`
+interface. Roles, dataflow, latency budget and output contract: `docs/AGENT-SYSTEM.md`.
+
+- Domain code never imports the agent framework. `git grep -i crewai` outside
+  `adapters/` returns nothing, same rule as Groq.
+- **Every agent's output is untrusted, including the Editor's.** Schema → business →
+  ownership validation runs on the merged response regardless of what any agent asserted.
+  An agent asked to critique is not thereby trusted.
+- Agent-to-agent messages are untrusted. A compromised upstream agent must not be able
+  to instruct a downstream one.
+- Each role must be independently ablatable and must change the output. A role that can
+  be removed without changing the result is decoration — delete it.
+- Never re-run the full crew for a single-slot swap.
+
+## Trend rules
+
+Trend input comes from the `TrendSource` adapter, never from model recall. Asking a model
+what is currently fashionable returns confident output from a training cutoff with no
+source and no date — that is the gimmick this project exists to avoid.
+
+- A trend may only re-rank or contextualise items the user already owns. It may never
+  introduce a garment.
+- Every trend claim shown to the user carries its source and publication date. If it
+  cannot be attributed, it is not shown.
+- Trend text from the web is untrusted content, subject to the same injection rules as
+  text found inside an uploaded image.
+- A stale corpus degrades honestly: name the date rather than implying currency.
+
+## Advisory output rules
+
+The product gives pro tips, alternatives, combinations and budget tricks. Budget value
+comes from maximising what the user already owns — layering, cuffing, tucking, re-wear,
+proportion, care and longevity.
+
+Wardrobe gaps may be named generically ("a white leather sneaker would unlock five more
+outfits"). Never a brand, price, merchant or link. The product sells nothing.
 
 ## Repository layout
 

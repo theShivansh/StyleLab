@@ -3,7 +3,12 @@
 ## Functional
 
 - [ ] landing works
-- [ ] full path works with GROQ_API_KEY unset (demo analyzer)
+- [ ] app boots with a real key; **fails loudly without one, never into a stub**
+- [ ] boot-time model availability check passes for both vision models
+- [ ] agent crew p50 ≤ 8s, p95 ≤ 15s, measured
+- [ ] ablation test green — every agent role changes the output
+- [ ] trend notes all carry source + published_at
+- [ ] no brand/price/merchant/link anywhere in advisory output
 - [ ] multi-image upload works in one gesture
 - [ ] invalid image gives actionable guidance and does not fail the batch
 - [ ] cards appear progressively as each extraction finishes

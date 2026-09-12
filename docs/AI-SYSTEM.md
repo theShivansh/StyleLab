@@ -33,6 +33,22 @@ May not:
 - name what the wardrobe is missing
 - classify feedback
 
+### Agent crew — `GROQ_TEXT_MODEL`
+
+Composition is performed by a crew of specialist agents (Style Profiler, Trend Scout,
+Outfit Architect, Critic, Practical Advisor, Editor) behind the `OutfitAdvisor`
+interface. Roles, dataflow, latency budget, output contract and the anti-theatre
+ablation requirement live in `docs/AGENT-SYSTEM.md`.
+
+Every agent's output is untrusted, including the Editor's. Validation below applies to
+the merged response regardless of what any agent asserted.
+
+### Trend input
+
+From the `TrendSource` adapter, never from model recall. Trends may re-rank or
+contextualise owned items; they may never introduce a garment. Every trend claim shown
+carries its source and date or it is dropped. See `docs/DECISIONS.md`.
+
 ### Deterministic application logic
 
 - candidate retrieval, **scoped to `user_id` in SQL**
@@ -59,27 +75,28 @@ Scope is enforced before the call and re-checked after it. A model response nami
 item outside the retrieved set is rejected, not fetched. Prompt text never carries an
 instruction like "only use these items" as its *only* defence.
 
-## Demo mode without credentials
+## No demo mode
 
-`APP_MODE=demo` must complete the full upload → wardrobe → outfit path with
-`GROQ_API_KEY` unset. There is no seeded demo closet, so the mock cannot simply replay
-canned items — it has to respond to whatever the user actually uploaded.
+The application requires `GROQ_API_KEY` and always performs real inference. There is no
+seeded result, no fake extraction, and no "demo data" label in the product. A missing or
+invalid key is a loud boot failure, not a silent downgrade.
 
-`DeterministicWardrobeAnalyzer` therefore does real, cheap, local analysis:
+`tests/ai/` and CI use stub adapters satisfying the same interfaces. Those are test
+doubles for an external dependency — the running application must never reach them. See
+`docs/DECISIONS.md` (demo mode removed).
 
-- **Colour** — measured from the pixels (dominant colour clustering, mapped to a named
-  palette). Genuinely derived from the image.
-- **Dimensions / quality** — measured: resolution, aspect ratio, brightness, blur proxy.
-  Drives the same quality warnings the real path uses.
-- **Category / subcategory** — taken from the user's own selection at upload time, which
-  the UI asks for anyway as a correction affordance.
-- **Fit, formality, tags** — left null with `confidence: 0`, surfaced as "not analyzed in
-  demo mode", never guessed.
+## Model fallback chain
 
-Everything on screen in demo mode is therefore either measured from the image or supplied
-by the user. Nothing is fabricated, so the demo makes no claim the code cannot support.
-The adapter satisfies the same interface and the same schema as the Groq analyzer, so the
-domain layer cannot tell them apart — which is exactly what Case 01 and Case 11 assert.
+Vision: `GROQ_VISION_MODEL` (`qwen/qwen3.8-27b`) → `GROQ_VISION_FALLBACK_MODEL`
+(`qwen/qwen3.6-27b`).
+
+The fallback is for **availability**, not quality. Trigger it on provider error, rate
+limit, timeout, or a model ID that no longer resolves. Do **not** trigger it on a
+low-confidence extraction — that is a signal to surface to the user for correction, and
+retrying a cheaper model to get a more confident wrong answer is the opposite of what
+this system is for.
+
+Both IDs are verified against Groq's model list at boot.
 
 ## Prompt contract
 
@@ -142,10 +159,11 @@ Reject if:
 
 ## Fallback hierarchy
 
-1. Groq structured response
-2. retry with a constrained prompt
-3. deterministic ranker over the same candidate set
-4. state the gap honestly — "your wardrobe needs a bottom for this" — and stop
+1. full agent crew
+2. crew minus Trend Scout (TrendSource unavailable or stale beyond `TREND_MAX_AGE_DAYS`)
+3. Architect + Editor only (latency circuit breaker tripped)
+4. deterministic ranker over the same candidate set
+5. state the gap honestly — "your wardrobe needs a bottom for this" — and stop
 
 There is no curated fallback outfit any more. A curated look would be made of garments
 the user does not own, which is precisely the thing the grounding rule forbids.
@@ -154,11 +172,15 @@ the user does not own, which is precisely the thing the grounding rule forbids.
 
 schema validity · wardrobe grounding · **cross-user isolation** · extraction accuracy ·
 extraction honesty · correction persistence · category compatibility · preference
-adherence · diversity · explanation relevance · latency · failure rate
+adherence · diversity · explanation relevance · **trend attribution** · **agent ablation**
+· **advisory safety** · latency · cost per composition · failure rate
 
 ## Cost controls
 
 - analyse each image once; cache by checksum, and re-analyse only on explicit request
+- cache the style profile; invalidate on wardrobe change, not per request
+- never re-run the full crew for a single-slot swap — Architect and Editor only
+- cap crew size; adding an agent requires an ablation result
 - prefilter candidates deterministically before the LLM
 - short structured outputs
 - batch multi-item uploads into one job where the provider allows it
@@ -168,7 +190,13 @@ adherence · diversity · explanation relevance · latency · failure rate
 
 User images and user text are untrusted.
 
+Three untrusted channels feed this system: text inside uploaded images, trend text
+retrieved from the web, and agent-to-agent messages.
+
 Text recovered from a photograph — slogans, care labels, tags, handwriting — is data. It
 may inform `pattern` or `style_tags`. It may never alter instructions, change the output
 schema, or widen retrieval scope. Treat every extracted string as a value, never as an
 instruction.
+
+The same holds for trend copy fetched from the web, and for what one agent says to
+another. A compromised upstream agent must not be able to instruct a downstream one.

@@ -16,7 +16,8 @@ Build:
 - mobile bottom sheets
 - deterministic local state
 
-Runs fully in demo mode with no credentials, via the deterministic analyzer.
+Requires a real `GROQ_API_KEY`; there is no demo mode. Component and E2E tests use stub
+adapters, but the running app never reaches them.
 
 UX requirements:
 - progressive disclosure; never a wall of form
@@ -29,7 +30,7 @@ UX requirements:
 - "Compose outfit" is the primary action and is reachable early
 
 Acceptance:
-- upload → analysis → review → compose completes entirely in demo mode
+- upload → analysis → review → compose completes against live Groq
 - a failing image costs one card, not the run
 - correcting a field persists and is reflected in the next composition
 - selection and wardrobe state persist across navigation

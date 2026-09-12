@@ -28,23 +28,26 @@ Environment:
 
 Never expose server-only variables through `NEXT_PUBLIC_*`.
 
-## Demo mode
+## Runtime requirements
 
-Set:
+There is no demo mode and no offline path. `GROQ_API_KEY` is required; the application
+fails loudly at boot without it rather than degrading into a stub.
 
-`APP_MODE=demo`
+At startup, verify:
+- `GROQ_API_KEY` present and accepted
+- `GROQ_TEXT_MODEL`, `GROQ_VISION_MODEL` and `GROQ_VISION_FALLBACK_MODEL` all resolve
+  against Groq's live model list
+- `TREND_CORPUS_PATH` readable, and its newest entry within `TREND_MAX_AGE_DAYS`
+  (a stale corpus is a warning and disables the Trend Scout, not a boot failure)
 
-Demo mode must:
-- use the deterministic wardrobe analyzer (measures colour locally, fabricates nothing)
-- use deterministic profile
-- no rendering step; results are composed from the user's own photos
-- exercise the same frontend state machine
-- avoid requiring external secrets
+Fail at boot, not at a user's first request. Groq deprecates models on weeks of notice,
+so a deployment that sat idle can wake up broken.
 
-## Production mode
+## CI secrets
 
-Set:
-`APP_MODE=production`
+`GROQ_API_KEY` must be present in repository secrets for the `live-smoke` job. That job
+runs on `main` only — fork pull requests cannot read secrets, and real calls cost tokens.
+Every other CI job runs on stub adapters with no key.
 
 Production provider availability should be checked at startup.
 

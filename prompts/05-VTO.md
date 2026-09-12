@@ -29,8 +29,8 @@ Do not couple the frontend to a provider. Do not send a user's face or body phot
 anywhere — the product has no try-on path and no reason to hold one.
 
 Acceptance:
-- the deterministic analyzer completes the full upload → wardrobe path with
-  `GROQ_API_KEY` unset
+- the full upload → wardrobe path completes against live Groq, with the vision fallback
+  chain exercised (primary error → fallback model, per AI-EVAL-CASES Case 24)
 - one failing image fails one card, never the batch
 - no blocking synchronous HTTP request for analysis
 - job status is observable

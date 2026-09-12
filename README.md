@@ -6,6 +6,10 @@ wardrobe, and styles outfits from it. It sells nothing and links to no merchant.
 
 > **STYLELAB understands YOUR closet.**
 
+> **Requires a Groq API key.** There is no demo mode and no offline path — the app
+> performs real inference and fails loudly at boot without a key. Copy `.env.example`
+> to `.env` and set `GROQ_API_KEY` before running anything.
+
 ### Core loop
 
 Upload → Extract → Review/correct → Compose → Swap → Save
@@ -16,13 +20,14 @@ Upload → Extract → Review/correct → Compose → Swap → Save
 2. Groq multimodal garment extraction into structured metadata
 3. Per-field confidence, with correction as a first-class interaction
 4. Ownership-scoped outfit composition — only items you own
-5. What-If swap, one slot at a time
-6. Personalised style profile
-7. Wardrobe gap detection ("you have no footwear yet")
-8. Extraction audit trail — what the model claimed, what was rejected
-9. 7-Day outfit planner *(P1, cuttable)*
-10. Demo mode that runs with no credentials and fabricates nothing
-11. AI evaluation harness, including cross-user isolation
+5. Multi-agent advisory crew: critique, pro tips, alternatives, combinations, budget tricks
+6. What-If swap, one slot at a time
+7. Personalised style profile
+8. Wardrobe gap detection, named generically — no brand, price or merchant
+9. Extraction audit trail — what the model claimed, what was rejected
+   plus sourced, dated trend context that can only re-rank what you own
+10. 7-Day outfit planner *(P1, cuttable)*
+11. AI evaluation harness, including cross-user isolation and agent ablation
 12. Automated unit / integration / E2E / accessibility testing
 
 ### Product positioning
@@ -39,11 +44,14 @@ claims of any kind.
 
 **Groq is the default AI provider.**
 
-- `GROQ_TEXT_MODEL` — `openai/gpt-oss-120b` for structured reasoning and ranking
-- `GROQ_VISION_MODEL` — garment extraction; **the default is an open decision, see
-  `docs/DECISIONS.md`** before S5
+- `GROQ_TEXT_MODEL` — `openai/gpt-oss-120b`, powering the agent crew
+- `GROQ_VISION_MODEL` — `qwen/qwen3.8-27b` for garment extraction
+- `GROQ_VISION_FALLBACK_MODEL` — `qwen/qwen3.6-27b`, **availability only, never quality**
 - Groq Structured Outputs with JSON Schema where supported
 - Model IDs live in `.env.example` and the adapter config. Nowhere else.
+
+Groq's throughput is what makes a seven-agent crew viable inside a 15s p95 budget. On a
+slower provider this design would not ship — see `docs/AGENT-SYSTEM.md`.
 
 Verify configured model IDs against Groq's live model list at boot in production, and
 fail loudly there rather than at a user's first request — Groq has deprecated models on
@@ -84,15 +92,16 @@ automated tests
 ### AI integrity
 deterministic candidate retrieval · structured model outputs · evaluation fixtures ·
 hallucination checks · **unowned-item rejection** · **cross-user isolation** ·
-extraction honesty · fallback behaviour · latency/cost logging
+extraction honesty · **sourced and dated trend claims** · **agent ablation — every role
+must change the output or be deleted** · fallback ladder · latency/cost logging
 
 ### UX integrity
 loading / error / empty states · responsive layout · keyboard navigation · reduced
 motion · privacy controls · graceful extraction failures · correction affordances
 
 ### Demo integrity
-complete path without private credentials · a demo analyzer that measures rather than
-fabricates · clearly labelled demo metrics · no commerce or retailer claims
+rehearsed against the live path · no fabricated results anywhere · honest reporting when
+the crew ran degraded · clearly labelled simulated metrics · no commerce or retailer claims
 
 ---
 
@@ -131,6 +140,7 @@ local ones.
 6. Result + Swap
 7. Planner + analytics
 8. AI evaluation
+8b. Multi-agent advisory crew + trend grounding
 9. QA + security + accessibility + performance
 10. Deployment + portfolio case study
 

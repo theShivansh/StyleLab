@@ -17,6 +17,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S6 | Upload + analysis pipeline | 05 | todo | — | — | |
 | S7 | Result + swap | 06 | todo | — | — | |
 | S8 | AI eval harness | 10 | todo | — | — | |
+| S8b | Agent crew + trends | 14 | todo | — | — | multi-agent advisory layer |
 | S9 | Planner + analytics | 07 | todo | — | — | P1, cuttable |
 | S10 | Recruiter demo | 11 | todo | — | — | |
 | S11 | Harden + deploy | 08 | todo | — | — | |
@@ -38,11 +39,15 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
       "Animaster" rejected — does not exist. Evidence in docs/DECISIONS.md.
 - [x] B4 — CLOSED. VTO removed entirely; the result is a composed look built from the
       user's own garment photos.
-- [ ] B5 — Groq vision model default contested (CLAUDE.md says 3.6, five docs say 3.8).
-      Resolve before S5. See docs/DECISIONS.md.
-- [ ] B6 — Cold start is now the top product risk: no demo wardrobe means a live upload
-      must succeed in front of an interviewer. Stage presenter garment photos before any
-      demo; hold the 90s budget in docs/DEMO-SCRIPT.md.
+- [x] B5 — RESOLVED 2026-09-12. Vision primary qwen/qwen3.8-27b, fallback
+      qwen/qwen3.6-27b (availability only, never for quality). See docs/DECISIONS.md.
+- [ ] B6 — Cold start is the top product risk: no demo wardrobe AND no demo mode means a
+      live upload and live Groq calls must both succeed in front of an interviewer. Stage
+      presenter garment photos in advance; hold the budget in docs/DEMO-SCRIPT.md.
+- [ ] B7 — GROQ_API_KEY is now required to run anything. Provision it, add it to repo
+      secrets for the live-smoke CI job, and rehearse against the live path.
+- [ ] B8 — Trend corpus (data/trends/) not yet assembled. Each entry needs source +
+      published_at. Without it the Trend Scout is skipped (degradation level 2).
 
 ## Decisions taken mid-build
 

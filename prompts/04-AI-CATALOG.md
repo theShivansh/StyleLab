@@ -9,8 +9,10 @@ Implement:
   unscoped read path, not even for admin or debug
 - deterministic filtering by role and compatibility
 - compatibility scoring
-- `WardrobeAnalyzer` interface + `DeterministicWardrobeAnalyzer`
-- `OutfitRanker` interface + `DeterministicRanker`
+- `WardrobeAnalyzer` interface (Groq implementation lands in phase 12)
+- `OutfitAdvisor` interface (agent crew lands in phase 14)
+- `DeterministicRanker` — a degradation step in the fallback ladder, not a product mode
+- stub implementations for `tests/ai/` only
 - structured output schemas for extraction and for ranking
 - ownership re-validation of every model-returned item ID
 - `item_extractions` audit writes, including rejected attempts
@@ -24,10 +26,9 @@ preference match · wardrobe variety
 The LLM may rank and explain candidates. It may never introduce an item ID that was not
 in the retrieved candidate set.
 
-The deterministic analyzer must do real work, not return canned data: measure dominant
-colour and image quality from the pixels, take category from the user's upload hint, and
-leave everything else null at `confidence: 0`. It must satisfy the same schema as the
-live analyzer. See `docs/AI-SYSTEM.md`.
+`DeterministicRanker` is the fourth rung of the fallback ladder in `docs/AI-SYSTEM.md` —
+it ranks owned items without an LLM when the crew is unavailable. It is not a demo mode
+and the app must never route to it while the provider is healthy.
 
 Add tests for — **write them red first, then green**:
 - an item ID outside the candidate set is rejected

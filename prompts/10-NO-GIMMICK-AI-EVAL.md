@@ -13,7 +13,8 @@ You must verify:
 5. Invalid model outputs trigger retry/fallback.
 6. Prompt injection fixtures are handled.
 7. AI calls have timeout/retry boundaries.
-8. Demo mode can run without external AI.
+8. The eval suite runs on stub adapters with no API key, while the product itself has no
+   offline path and fails loudly without one.
 9. AI evaluation fixtures can run deterministically.
 10. Generation events expose enough telemetry to measure quality and latency.
 

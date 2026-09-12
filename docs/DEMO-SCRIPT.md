@@ -11,8 +11,10 @@ run on real clothes.
   even light, one garment per frame.
 - Keep one deliberately imperfect photo — dim or cropped. You will use it.
 - Folder on the desktop, named, open before you start.
-- Verify `APP_MODE=demo` runs with `GROQ_API_KEY` unset. If you are demoing live Groq,
-  verify the key and the model IDs that morning.
+- **Verify the live path that morning.** There is no demo mode: a real `GROQ_API_KEY`
+  must be set, both vision models must pass the boot availability check, and Groq must be
+  up. Do one full rehearsal run end to end — not a mock.
+- Check the trend corpus is within `TREND_MAX_AGE_DAYS`, or the Trend Scout is skipped.
 
 ## 30-second pitch
 
@@ -47,8 +49,10 @@ is the most differentiated moment in the run.
 - vision extraction → JSON Schema → Pydantic → business validation → ownership validation
 - per-field confidence, and what the UI does below the confidence floor
 - `corrected_fields` survives re-analysis
-- demo analyzer measures colour from pixels rather than faking metadata, so the
-  credential-free path still makes no claim the code can't support
+- the agent crew: seven roles, four sequential hops, per-agent stages in the progress UI
+- every agent's output is untrusted — ownership validation runs on the merged response
+  regardless of what the Critic approved
+- trend notes carry source and date, or they are dropped rather than shown
 - adapter boundary: `git grep -i groq` outside `adapters/` returns nothing
 - async per-image jobs, partial-batch success
 - the eval fixtures — especially cross-user isolation and injection-via-image

@@ -56,8 +56,9 @@ Cover:
 Validate:
 - API request/response schemas
 - database model constraints
-- WardrobeAnalyzer contract (Groq and deterministic implementations must be indistinguishable)
-- OutfitRanker contract
+- WardrobeAnalyzer contract (live and stub implementations indistinguishable to the domain)
+- OutfitAdvisor contract
+- TrendSource contract — every note carries source + published_at
 - AnalyticsClient contract
 
 ## 5. Frontend component tests
@@ -93,7 +94,8 @@ Landing
 → Save
 ```
 
-This runs with GROQ_API_KEY unset. It is the recruiter path, so it is `@critical`.
+E2E runs against stub adapters — test doubles, not a product mode. This is the recruiter
+path, so it is `@critical`. Real-key coverage lives in the `live-smoke` CI job on main.
 
 Additional:
 - invalid upload, and a batch where one file of several is invalid
@@ -142,14 +144,25 @@ Each fixture has:
 - minimum constraints
 
 Example checks:
-- 100% of returned IDs exist AND belong to the requesting user
+- 100% of returned IDs exist AND belong to the requesting user, through the full crew
+- every trend note carries source and published_at, or was dropped
+- no brand, price, merchant or link in any advisory field
 - no unowned item, including under a crafted/forged model response
 - category composition valid
 - requested occasion satisfied
 - stated reasons do not assert facts the system does not hold
 - guessed fields are never phrased as observations
 
-AI tests must be able to run in mock mode without API calls.
+AI tests run on stub adapters with no API calls. This keeps the regression suite
+deterministic, free, and runnable on fork pull requests — a suite that costs money per run
+stops being run. Real-key coverage is the `live-smoke` CI job on main.
+
+### Agent ablation
+
+`tests/ai/test_ablation.py` disables each agent role in turn and asserts the output
+changes materially. A role that can be removed without changing the result is decoration.
+This test is the difference between a multi-agent system and multi-agent theatre — run it
+before claiming the crew adds value.
 
 ## 10. Reliability testing
 
@@ -180,7 +193,9 @@ Use seeded load tests for API endpoints where appropriate.
 - oversized upload
 - unauthorized asset access
 - unauthorized outfit access
-- prompt injection fixtures, including text rendered inside an uploaded image
+- prompt injection fixtures: text inside an uploaded image, trend copy from the web, and
+  agent-to-agent messages
+- a well-formed crew response containing another user's item must still hard-fail
 - EXIF/GPS stripped on ingest
 - signed URLs absent from logs and analytics
 - secret scanning

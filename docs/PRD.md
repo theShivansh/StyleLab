@@ -80,6 +80,9 @@ Commerce was deliberately removed — see `docs/DECISIONS.md` (2026-09-12).
 - style preferences
 - outfit composition grounded in the wardrobe
 - outfit result with rationale
+- multi-agent advisory output: critique, pro tips, alternatives, combinations,
+  budget tricks, generically-named wardrobe gaps
+- sourced and dated trend context
 - swap one slot
 - regenerate
 - save
@@ -120,6 +123,10 @@ Supporting:
 - insufficient-wardrobe rate
 - extraction failure rate
 - median analysis latency per image
+- median and p95 composition latency
+- crew degradation level distribution
+- tokens per composition
+- advisory engagement: tips read, alternatives applied
 
 Extraction acceptance rate is the honest quality signal. Track it from day one; a high
 correction rate is information, not embarrassment.
@@ -137,11 +144,18 @@ A/B:
 **Extraction quality is the product risk.** If the vision model reads garments poorly,
 every downstream outfit is wrong and the correction UI carries the whole experience.
 
-**Cold start is the adoption risk.** With no demo wardrobe, a first-time user must upload
-before seeing any value. This is a deliberate choice (`docs/DECISIONS.md`); it makes the
-first 60 seconds the highest-stakes part of the product.
+**Cold start is the adoption risk.** With no demo wardrobe *and* no demo mode, a
+first-time user must upload photos and reach live Groq before seeing any value. Deliberate
+(`docs/DECISIONS.md`); it makes the first 60 seconds the highest-stakes part of the product.
 
-Also: analysis latency, privacy of closet imagery, and scope creep.
+**Agent latency and cost are the operational risks.** The crew costs roughly 4-6x a single
+ranking call and adds hops to the critical path. Budgets, the degradation ladder and the
+anti-theatre ablation requirement are in `docs/AGENT-SYSTEM.md`.
+
+**Unsourced trend claims are the credibility risk.** Mitigated by requiring source and
+date on every trend note, and dropping those that lack it.
+
+Also: privacy of closet imagery, and scope creep.
 
 ## 12. Product principles
 

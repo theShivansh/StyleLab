@@ -97,7 +97,42 @@ No item IDs are accepted from the client — candidates are retrieved server-sid
 caller's wardrobe. Accepting client-supplied IDs would move the ownership boundary into
 the request body.
 
-Return: a job, or a composed outfit.
+Return: a job. Composition runs the agent crew, so it is always async — see
+`docs/AGENT-SYSTEM.md` for the stages surfaced through `GET /jobs/{job_id}`.
+
+Completed result:
+```json
+{
+  "outfit": { "item_ids": ["item_1","item_4","item_9"], "name": "Quiet Weekday",
+              "occasion": "college", "match_score": 87 },
+  "rationale": ["Neutral palette holds together", "Relaxed top against a slim leg"],
+  "confidence": 0.87,
+  "critique": { "considered": ["the olive jacket, too heavy for the occasion"],
+                "tradeoffs": ["proportion is deliberate, not accidental"] },
+  "pro_tips": [{ "tip": "Half-tuck the shirt to break the vertical line",
+                 "type": "proportion" }],
+  "alternatives": [{ "swap_role": "footwear", "item_id": "item_12",
+                     "why": "same palette, lifts the formality" }],
+  "combinations": [{ "item_ids": ["item_1","item_7"], "occasion": "evening",
+                     "name": "Same shirt, later" }],
+  "budget_tricks": [{ "trick": "Layer the grey tee under the open shirt for a third look",
+                      "unlocks_outfits": 3 }],
+  "wardrobe_gaps": [{ "category": "footwear",
+                      "generic_description": "a white leather sneaker",
+                      "unlocks_outfits": 5 }],
+  "trend_notes": [{ "trend": "Relaxed tailoring holding through AW26",
+                    "source": "...", "published_at": "2026-07-14",
+                    "applies_to_items": ["item_4"] }],
+  "degradation_level": 1
+}
+```
+
+Contract rules enforced server-side before this is returned:
+- every `item_id` in every field belongs to the caller
+- every `trend_notes` entry has `source` and `published_at`, or it is absent
+- `wardrobe_gaps[].generic_description` carries no brand, price, merchant or link
+- `degradation_level` (1-5, `docs/AGENT-SYSTEM.md`) is reported honestly; the UI says when
+  advice is shallower than usual rather than pretending otherwise
 
 Insufficient wardrobe is a 200 with a named gap, not an error:
 ```json
@@ -145,6 +180,10 @@ The audit trail — what each model returned, what was rejected and why. Powers 
 ```
 
 Codes: `IMAGE_TOO_LARGE` · `UNSUPPORTED_FORMAT` · `IMAGE_UNREADABLE` ·
-`EXTRACTION_FAILED` · `PROVIDER_TIMEOUT` · `INSUFFICIENT_WARDROBE` · `ITEM_NOT_FOUND`
+`EXTRACTION_FAILED` · `PROVIDER_TIMEOUT` · `INSUFFICIENT_WARDROBE` · `ITEM_NOT_FOUND` ·
+`AGENT_BUDGET_EXCEEDED` · `TREND_SOURCE_UNAVAILABLE` · `AI_UNAVAILABLE`
+
+`AI_UNAVAILABLE` is a real outage, not a downgrade path. There is no demo mode to fall
+back to, so say so plainly rather than serving a fabricated result.
 
 Never expose stack traces.

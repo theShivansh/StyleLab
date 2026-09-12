@@ -14,6 +14,7 @@
 ## Architecture
 - ARCHITECTURE.md
 - AI-SYSTEM.md
+- AGENT-SYSTEM.md
 - DATA-MODEL.md
 - API-SPEC.md
 - TOOLING.md

@@ -76,5 +76,5 @@ Optional:
 ## Scope rule
 
 If live extraction is unstable, preserve the complete product flow behind the analyzer
-adapter and fall back to the deterministic analyzer. Do not sacrifice the UX architecture
+adapter and fall back down the ladder in docs/AI-SYSTEM.md. Do not sacrifice the UX architecture
 to chase one model integration.

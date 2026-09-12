@@ -26,6 +26,13 @@ Composition:
 - composition_failed
 - insufficient_wardrobe      *(missing roles)*
 - outfit_viewed
+- agent_stage_completed       *(role, duration, tokens)*
+- crew_degraded               *(level, reason)*
+- trend_note_shown            *(source, corpus age)*
+- pro_tip_viewed
+- alternative_applied
+- budget_trick_viewed
+- wardrobe_gap_shown
 - item_swapped
 - outfit_regenerated
 - outfit_saved
@@ -64,6 +71,11 @@ KPIs:
 - swap rate
 - save rate
 - insufficient-wardrobe rate
+- composition p50 / p95 latency
+- crew degradation level distribution
+- tokens per composition
+- trend corpus age at use
+- advisory engagement rate
 - session completion
 
 Extraction acceptance rate is the honest quality signal for the AI. A high correction

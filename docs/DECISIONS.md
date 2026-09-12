@@ -19,7 +19,7 @@ Claude Code should append decisions when a choice materially affects architectur
 
 ---
 
-### 2026-09-12 — Groq vision model default is contradictory (OPEN — resolve before S5)
+### 2026-09-12 — Groq vision model default (RESOLVED)
 
 Context:
 The harness patch added an "AI provider rules" section to `CLAUDE.md` that names
@@ -32,8 +32,13 @@ a one-line env change for quality comparison. The rest of the kit disagrees:
 practice while every other doc says 3.8 — the exact drift the audit's finding #13 warns about.
 
 Decision:
-NOT TAKEN. Left contradictory on purpose rather than silently changing the project's
-default model. Resolve before running `prompts/12-GROQ-INTEGRATION.md` (S5).
+**Primary `qwen/qwen3.8-27b`, fallback `qwen/qwen3.6-27b`.** Not an either/or — a chain.
+3.8 is the stronger, ~33% pricier sibling and vision is now the product's front door, so
+extraction quality is worth paying for. 3.6 catches deprecation, rate limits, and
+provider errors without a code change.
+
+`CLAUDE.md` and `.env.example` aligned to this; the five docs already saying 3.8 are now
+correct. Model IDs remain confined to `.env.example` and the adapter config.
 
 Alternatives:
 (a) Align `.env.example` + `ARCHITECTURE.md` to `qwen/qwen3.6-27b` — follows CLAUDE.md's
@@ -47,11 +52,11 @@ Trade-offs:
 Leaving it open risks S5 picking arbitrarily; that risk is why this entry exists.
 
 Follow-up:
-1. Verify both model IDs actually resolve against Groq's live model list before relying on
-   either. The audit asserts both are live; that assertion is not independently confirmed here,
-   and the same audit notes Groq has deprecated models on weeks of notice.
-2. Pick (a) or (b), edit the two authorised locations only, and replace this entry's
-   "Decision: NOT TAKEN" with the choice.
+1. Verify both IDs against Groq's live model list at boot. Neither is independently
+   confirmed here, and Groq has deprecated models on weeks of notice — the fallback
+   reduces that risk but does not remove it. Fail loudly at startup, not at first request.
+2. Fallback is for availability, not quality. If 3.8 returns a low-confidence extraction,
+   that is a confidence problem surfaced to the user, not a reason to retry on 3.6.
 
 ---
 
@@ -201,3 +206,120 @@ Follow-up:
    DEVELOPMENT-PLAN, README, AGENTS, CLAUDE.md, and prompts 03/04/05/06/07/08/10/11/12.
 4. Privacy scope grew: closet photographs are taken indoors and carry incidental
    background. EXIF including GPS is stripped on ingest; see `docs/SECURITY-PRIVACY.md`.
+
+---
+
+### 2026-09-12 — Demo mode removed; the product always runs real AI
+
+Context:
+The kit treated demo mode as load-bearing: a credential-free path with seeded results, so
+a recruiter could see the product with no key. The wardrobe pivot already removed seeded
+data. The remaining question was whether a fake-inference path should exist at all.
+
+Decision:
+**No demo product mode.** `APP_MODE` is gone. The application requires `GROQ_API_KEY` and
+always performs real inference. There is no deterministic analyzer serving users, no
+seeded result, and no "demo data" label anywhere in the product.
+
+**Test doubles are retained** — and are not demo mode. `tests/ai/` and CI run against
+recorded fixtures and stub adapters, exactly as they would for any external dependency.
+
+Why the distinction matters:
+Making the eval suite require a live key would make the project's central proof — the
+grounding and cross-user-isolation regression tests — slow, paid, non-deterministic, and
+unrunnable on fork pull requests. A regression suite that costs money per run stops being
+run. The doubles exist so the tests stay honest, not so the product can fake an answer.
+
+CI shape:
+- `ai-eval` and unit/integration jobs — stub adapters, no key, run on every PR
+- `live-smoke` — real key from repository secrets, `main` only, a handful of calls that
+  assert the live models still answer and still satisfy the schema
+
+Trade-offs:
+- No key, no product. A reviewer who clones the repo cannot run it without their own Groq
+  key. Accepted: the demo is presenter-driven with a key in hand.
+- Every demo now costs tokens and depends on Groq being up. Rehearse against the live
+  path, not a mock, and have the model-availability boot check visible.
+- `README` must state the key requirement prominently, or the repo looks broken to a
+  reviewer who tries `pnpm dev` and sees a boot failure.
+
+---
+
+### 2026-09-12 — Multi-agent advisory layer (CrewAI behind an adapter)
+
+Context:
+The product should not just name an outfit; it should reason — trend awareness, pro tips,
+alternatives, budget tricks, and a genuine second opinion.
+
+Decision:
+A crew of specialist agents on `openai/gpt-oss-120b` via Groq, orchestrated by **CrewAI**,
+behind an `OutfitAdvisor` interface. See `docs/AGENT-SYSTEM.md` for roles and dataflow.
+
+Why CrewAI over AutoGen:
+The work is a fixed pipeline of distinct expert roles producing one merged artifact, which
+is CrewAI's role/task model almost exactly. AutoGen's strength is open-ended conversational
+delegation, which this does not need and which makes latency and cost unbounded.
+
+Why behind an adapter:
+`CLAUDE.md` forbids coupling domain code to vendor SDKs, and both frameworks churn fast.
+The domain calls `OutfitAdvisor`; swapping CrewAI for AutoGen, or for plain orchestrated
+calls, must be a one-file change. `git grep -i "crewai"` outside `adapters/` returns nothing.
+
+Trade-offs — stated plainly:
+- **Latency.** Naive sequential agents would take 30-60s. The DAG in `AGENT-SYSTEM.md`
+  parallelises to ~4 sequential hops. Groq's speed is what makes this viable at all; on a
+  slower provider this design would not ship. Budget is 8s p50, 15s p95, inside the
+  existing async job with per-agent progress stages.
+- **Cost.** Roughly 4-6x a single ranking call. Cap agent count, cap output tokens, and
+  cache the style profile — it changes far more slowly than the outfit request.
+- **Theatre risk.** An agent that only rephrases another agent's output is decoration.
+  Each role must be independently ablatable, and `AGENT-SYSTEM.md` requires an ablation
+  test proving each one changes the result.
+
+Every agent's output is untrusted. Ownership validation runs on the final merged response
+regardless of what any agent asserted, exactly as before.
+
+---
+
+### 2026-09-12 — Trend awareness must be sourced and dated, never recalled
+
+Context:
+"Current fashion sense" is a hallucination magnet. Asking an LLM what is trending returns
+confident output drawn from a training cutoff, with no source and no date.
+
+Decision:
+Trend input comes from a `TrendSource` adapter, never from model recall.
+
+- Default: a curated, dated, human-reviewed trend corpus committed to `data/trends/`,
+  each entry carrying `source`, `published_at`, and `region`.
+- Optional: a live web-search adapter for refresh.
+
+Hard rules:
+1. A trend may only **re-rank or contextualise items the user already owns.** It may never
+   introduce a garment, and the ownership validator does not care where a suggestion came from.
+2. Every trend claim surfaced to the user carries its source and date. If it cannot be
+   attributed, it is not shown.
+3. Trend text retrieved from the web is untrusted content — subject to the same injection
+   rules as text found inside an uploaded image (`AI-EVAL-CASES.md` Case 07).
+4. A stale corpus degrades gracefully: say "trend data from March 2026" rather than
+   implying currency the data does not have.
+
+Why:
+An unsourced trend claim is exactly the gimmick the whole eval layer exists to prevent.
+A dated, cited trend layer is a stronger interview artifact than a confident unsourced one.
+
+---
+
+### 2026-09-12 — Advisory output stays commerce-free
+
+Context:
+"Budget friendly tricks" could mean purchase advice, which would reintroduce the commerce
+scope removed earlier the same day.
+
+Decision:
+Budget value comes from maximising what the user owns: layering, cuffing, tucking,
+re-wear combinations, proportion tricks, care and longevity.
+
+Wardrobe gaps may be named, but **generically only** — "a white leather sneaker would
+unlock five more outfits". No brand, no price, no merchant, no link. This is the existing
+`missing_roles` concept made useful, not commerce returning by the back door.

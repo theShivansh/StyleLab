@@ -37,7 +37,8 @@ Sending an image to a model provider is a disclosure. Say so in the privacy copy
   to hold one
 - prefer providers that do not retain inputs for training; record the choice in
   `docs/DECISIONS.md`
-- in `APP_MODE=demo` nothing leaves the machine — the deterministic analyzer runs locally
+- there is no offline mode: every garment photo the user uploads is sent to Groq. Say so
+  in the privacy copy, plainly, before the first upload
 
 ## Secrets
 

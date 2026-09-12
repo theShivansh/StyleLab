@@ -17,6 +17,7 @@ review pass, not a build. Run:
 | 7 | `05-VTO.md` | S6 | |
 | 8 | `06-RESULT-REMIX.md` | S7 | |
 | 9 | `10-NO-GIMMICK-AI-EVAL.md` | S8 | the proof layer — do not skip |
+| — | `14-AGENT-CREW.md` | S8b | multi-agent advisory + trend grounding; **after** the harness |
 | 10 | `07-PLANNER-ANALYTICS.md` | S9 | P1 scope, cut if time is short |
 | 11 | `11-RECRUITER-DEMO.md` | S10 | |
 | 12 | `08-HARDEN-DEPLOY.md` | S11 | |
@@ -32,7 +33,7 @@ review pass, not a build. Run:
 /verify
 ```
 
-Then: `/ui-audit` after S2, S3, S7, S10 · `/architecture-audit` after S4, S5, S6
-· `/ai-eval` after S5 and S8 · `/demo-check` after S10 and S11.
+Then: `/ui-audit` after S2, S3, S7, S10 · `/architecture-audit` after S4, S5, S6, S8b
+· `/ai-eval` after S5, S8 and S8b · `/demo-check` after S10 and S11.
 
 Update `docs/PROGRESS.md` and commit before `/clear`. One phase per session.
