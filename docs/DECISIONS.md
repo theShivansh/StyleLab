@@ -323,3 +323,39 @@ re-wear combinations, proportion tricks, care and longevity.
 Wardrobe gaps may be named, but **generically only** — "a white leather sneaker would
 unlock five more outfits". No brand, no price, no merchant, no link. This is the existing
 `missing_roles` concept made useful, not commerce returning by the back door.
+
+---
+
+### 2026-09-12 — S0 assumptions (recon + plan)
+
+Context:
+Prompt 00 instructs the agent to make reasonable assumptions and record them rather than
+ask. Recorded here; `docs/PLAN.md` has the full gap analysis.
+
+Decision:
+1. **Build from zero.** Recon found no source files at all, so working rule 2 ("adapt
+   rather than restart") does not apply. Nothing is being migrated.
+2. **Repo layout exactly as `CLAUDE.md` specifies** — `apps/web`, `apps/api`, `packages/`,
+   `data/`, `tests/ai/`. No third app. `tests/ai/` stays at the repo root; it is the
+   cross-cutting proof layer and must not be folded into either app.
+3. **Python pinned to 3.12**, matching CI. Local is 3.11.9, which would otherwise produce
+   "works locally, fails in CI". To be applied in S1.
+4. **`apps/web/package.json` is created first in S1.** `.claude/hooks/gate.sh` exits 0
+   while that file is absent, so the phase gate is currently inert — a session could end
+   with a broken tree reporting success. Creating it early switches the gate on.
+5. **Prompt 00 patched**, not merely overridden. It predated four decisions and would have
+   instructed a future session to build a demo mode, hunt for a nonexistent library, and
+   protect a "visualize" hero moment that no longer exists. Five contradictions listed in
+   `docs/PLAN.md` §3.
+
+Trade-offs:
+Pinning Python to 3.12 means installing it locally before S1's API work. The alternative —
+dropping CI to 3.11 — trades a one-time install for permanent drift against the deployment
+target, which is the worse deal.
+
+Follow-up:
+`.env.example` carries an uncommitted change that S0 could not inspect: the permission
+rule `Read(./.env.*)` in `.claude/settings.json` matches `.env.example` as well as `.env`.
+The deny was respected rather than circumvented. Because `.env.example` is tracked and not
+gitignored, a key pasted there would be committed. Verify by hand. If the rule proves too
+broad in daily use, narrow it to `Read(./.env)` and `Read(./.env.local)` — do not remove it.
