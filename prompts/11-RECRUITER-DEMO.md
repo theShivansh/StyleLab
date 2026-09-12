@@ -12,11 +12,11 @@ Landing
 → Generated look
 → What If?
 → Swap garment
-→ Save/Shop
+→ Save
 
 Add:
 - polished seeded demo user
-- seeded catalogue
+- the presenter's own garment photos, staged in a folder beforehand
 - pre-generated visual results
 - predictable timing
 - one excellent remix interaction

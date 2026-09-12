@@ -28,14 +28,14 @@ user can upload/select and build an outfit draft.
 
 ## Day 3
 
-Catalogue + recommendation
+Wardrobe domain + recommendation
 
 Exit:
-known SKUs can be filtered and ranked into valid outfit JSON.
+items the user owns can be filtered and ranked into valid outfit JSON.
 
 ## Day 4
 
-VTO pipeline
+Upload + async analysis pipeline
 
 Exit:
 generation job can be created, tracked, completed, and displayed.
@@ -75,4 +75,6 @@ Optional:
 
 ## Scope rule
 
-If VTO integration is unstable, preserve the complete product flow with a provider adapter and pre-generated demo assets. Do not sacrifice the UX architecture to chase one model integration.
+If live extraction is unstable, preserve the complete product flow behind the analyzer
+adapter and fall back to the deterministic analyzer. Do not sacrifice the UX architecture
+to chase one model integration.

@@ -1,10 +1,29 @@
 # Data Model — STYLELAB
 
+The wardrobe is user-owned. Every garment row traces to an image that user uploaded.
+There is no shared catalogue, no price, and no merchant URL — see `docs/DECISIONS.md`
+(2026-09-12, wardrobe pivot).
+
 ## users
 
 - id
 - email
 - created_at
+
+## assets
+
+Private image storage records. One row per uploaded file.
+
+- id
+- user_id
+- storage_key
+- mime_type
+- byte_size
+- width
+- height
+- checksum
+- created_at
+- deleted_at
 
 ## style_profiles
 
@@ -17,22 +36,51 @@
 - style_vector
 - updated_at
 
-## garments
+## wardrobe_items
+
+Replaces the old `garments` table. A garment the user owns, not a product for sale.
 
 - id
-- brand
-- title
-- category
+- user_id            *(NOT NULL — the ownership root; see Constraints)*
+- asset_id
+- status             `analyzing` · `ready` · `failed` · `archived`
+- category           `top` · `bottom` · `footwear` · `outerwear` · `accessory`
 - subcategory
-- color
+- color_primary
+- color_secondary
+- pattern
+- material_guess     *(a guess, and named as one — never displayed as fact)*
 - fit
-- material
-- price
-- image_url
-- commerce_url
-- style_tags
+- formality          `casual` · `smart-casual` · `formal`
+- season_tags
 - occasion_tags
-- active
+- style_tags
+- extraction_confidence   *(overall, 0–1)*
+- field_confidence        *(per-field map — drives which fields prompt for confirmation)*
+- corrected_fields        *(fields the user overrode; re-analysis must never overwrite these)*
+- analyzed_by             *(model id, or `deterministic-demo`)*
+- analyzed_at
+- created_at
+- deleted_at
+
+Removed from the old `garments` shape: `brand`, `price`, `commerce_url`, `active`.
+Nothing in this table is a commerce fact, so nothing here can misstate one.
+
+## item_extractions
+
+Append-only audit of what the model claimed for an item, including rejected attempts.
+This is the evidence trail behind every wardrobe field — keep it, it is what makes the
+grounding story demonstrable rather than assertable.
+
+- id
+- wardrobe_item_id
+- provider
+- model
+- raw_output          *(as returned, before validation)*
+- schema_valid
+- rejected_reason     *(null when accepted)*
+- latency_ms
+- created_at
 
 ## outfits
 
@@ -41,28 +89,16 @@
 - name
 - occasion
 - match_score
+- rationale
 - status
 - created_at
 
 ## outfit_items
 
 - outfit_id
-- garment_id
-- role
+- wardrobe_item_id
+- role               `top` · `bottom` · `footwear` · `outerwear` · `accessory`
 - rank
-
-## tryon_sessions
-
-- id
-- user_id
-- outfit_id
-- input_asset_id
-- output_asset_id
-- status
-- provider
-- duration_ms
-- error_code
-- created_at
 
 ## saved_outfits
 
@@ -83,8 +119,11 @@
 
 ## jobs
 
+Async work. With VTO removed, the analysis job is the async path.
+
 - id
-- type
+- user_id
+- type              `analyze_item` · `compose_outfit`
 - status
 - payload_reference
 - result_reference
@@ -94,7 +133,15 @@
 
 ## Constraints
 
-- foreign keys where appropriate
-- unique event IDs when ingestion is retried
-- user-owned records protected by row-level security
-- soft deletion only where product semantics require it
+- `wardrobe_items.user_id` is NOT NULL and every retrieval query filters on it.
+  Ownership is enforced in SQL **before** the model is called, never by prompt instruction.
+- `outfit_items` may only reference `wardrobe_items` belonging to the same user as the
+  parent outfit. Enforce this in the schema — a composite foreign key on
+  `(outfit_id, user_id)` / `(wardrobe_item_id, user_id)` makes cross-user leakage
+  unrepresentable rather than merely untested.
+- Row-level security on every user-owned table.
+- Soft deletion (`deleted_at`) on `assets` and `wardrobe_items`: the privacy flow needs
+  deletion to be observable and reversible-by-support, not silent.
+- Deleting an asset must cascade to the wardrobe item that depends on it, and any outfit
+  referencing that item becomes `status = incomplete` rather than silently rendering a gap.
+- Unique event IDs when ingestion is retried.

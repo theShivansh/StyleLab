@@ -3,16 +3,19 @@
 ## Functional
 
 - [ ] landing works
-- [ ] demo works without credentials
-- [ ] upload works
-- [ ] invalid upload gives guidance
-- [ ] style profile saves
-- [ ] product selection works
-- [ ] generation state works
-- [ ] result renders
-- [ ] remix works
+- [ ] full path works with GROQ_API_KEY unset (demo analyzer)
+- [ ] multi-image upload works in one gesture
+- [ ] invalid image gives actionable guidance and does not fail the batch
+- [ ] cards appear progressively as each extraction finishes
+- [ ] low-confidence fields are visibly hedged, not asserted
+- [ ] field correction persists and survives re-analysis
+- [ ] style profile saves, and is skippable with defaults
+- [ ] composition renders with rationale
+- [ ] swap changes one slot only, no page navigation
+- [ ] regenerate works
 - [ ] save works
-- [ ] shop CTA works
+- [ ] insufficient wardrobe names the gap instead of inventing an item
+- [ ] deleting an item marks dependent outfits incomplete
 - [ ] planner works where enabled
 - [ ] failures can recover
 
@@ -40,16 +43,21 @@
 - [ ] optimized images
 - [ ] heavy components lazy-loaded
 - [ ] no unnecessary rerender loops
-- [ ] generation does not block UI
-- [ ] cached demo result
+- [ ] analysis does not block UI
+- [ ] per-image analysis runs in parallel
+- [ ] extraction cached by checksum; re-upload costs nothing
 
 ## Security
 
 - [ ] no secrets committed
-- [ ] upload validation
-- [ ] ownership checks
-- [ ] no raw image logging
+- [ ] upload validation (MIME, size, resolution)
+- [ ] EXIF stripped on ingest, GPS included
+- [ ] ownership enforced in the query, not the prompt
+- [ ] cross-user isolation test green (AI-EVAL-CASES Case 11)
+- [ ] 404 not 403 for items the caller does not own
+- [ ] no raw image logging, no signed URLs in logs or analytics
 - [ ] provider errors sanitized
+- [ ] rate limiting on upload and extraction
 
 ## Build gates
 
@@ -67,4 +75,7 @@
 - [ ] screenshots
 - [ ] demo path
 - [ ] measured demo metrics clearly labelled as demo/experimental
-- [ ] no false retailer affiliation claims
+- [ ] no retailer affiliation, and no commerce claims at all — the product sells nothing
+- [ ] no material/fibre claim presented as fact rather than estimate
+- [ ] no inference about the person in any uploaded photo
+- [ ] extraction audit trail reachable from the UI

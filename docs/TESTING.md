@@ -23,7 +23,10 @@ Test pure functions:
 - silhouette scoring
 - deterministic ranker
 - style profile normalization
-- price totals
+- colour extraction from pixels (demo analyzer)
+- confidence-floor logic
+- corrected_fields merge on re-analysis
+- missing-role detection
 - event payload validation
 - job state transitions
 
@@ -42,27 +45,34 @@ Cover:
 - retry behavior
 - provider timeout
 - invalid AI output
-- invalid SKU
-- delete asset
+- an item ID outside the candidate set
+- **an item owned by another user (must 404, not 403)**
+- insufficient wardrobe
+- multi-image upload with one bad file
+- delete asset and its cascade
 
 ## 4. Contract tests
 
 Validate:
 - API request/response schemas
 - database model constraints
-- CommerceAdapter contract
-- VirtualTryOnProvider contract
+- WardrobeAnalyzer contract (Groq and deterministic implementations must be indistinguishable)
+- OutfitRanker contract
 - AnalyticsClient contract
 
 ## 5. Frontend component tests
 
 Cover:
-- garment selection
+- multi-image picker
+- progressive analysis cards
+- confidence hedging and inline correction
+- wardrobe grid
 - filters
 - dialogs/bottom sheets
-- generation states
+- analysis and composition states
 - result cards
-- remix controls
+- swap controls
+- insufficient-wardrobe state
 - error states
 - keyboard interaction
 
@@ -74,20 +84,24 @@ Critical flow:
 
 ```text
 Landing
-→ Demo
-→ Composer
+→ Upload 3+ photos
+→ Analysis
+→ Review / correct a field
 → Compose
-→ Generation
 → Result
-→ Remix
+→ Swap
 → Save
 ```
 
+This runs with GROQ_API_KEY unset. It is the recruiter path, so it is `@critical`.
+
 Additional:
-- invalid upload
+- invalid upload, and a batch where one file of several is invalid
+- correction persists through regeneration
+- insufficient wardrobe
 - retry
 - mobile viewport
-- delete image
+- delete image and see dependent outfits marked incomplete
 
 ## 7. Accessibility
 
@@ -105,10 +119,10 @@ Manual:
 
 Use Playwright screenshots for:
 - landing desktop/mobile
-- composer
-- generation
+- upload + analysis
+- wardrobe grid
 - result
-- remix
+- swap
 - planner
 
 Only approve intentional diffs.
@@ -120,18 +134,20 @@ Keep fixtures in:
 
 Each fixture has:
 - input style profile
-- candidate catalogue
-- expected allowed SKU set
+- the owning user's wardrobe
+- **a second user's wardrobe, to prove isolation**
+- expected allowed item-ID set
 - expected category roles
 - prohibited outputs
 - minimum constraints
 
 Example checks:
-- 100% returned IDs exist
-- no unknown SKU
+- 100% of returned IDs exist AND belong to the requesting user
+- no unowned item, including under a crafted/forged model response
 - category composition valid
 - requested occasion satisfied
-- stated reasons do not assert unavailable facts
+- stated reasons do not assert facts the system does not hold
+- guessed fields are never phrased as observations
 
 AI tests must be able to run in mock mode without API calls.
 
@@ -164,7 +180,9 @@ Use seeded load tests for API endpoints where appropriate.
 - oversized upload
 - unauthorized asset access
 - unauthorized outfit access
-- prompt injection fixtures
+- prompt injection fixtures, including text rendered inside an uploaded image
+- EXIF/GPS stripped on ingest
+- signed URLs absent from logs and analytics
 - secret scanning
 - dependency audit
 

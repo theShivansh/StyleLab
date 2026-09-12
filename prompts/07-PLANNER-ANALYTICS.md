@@ -20,7 +20,8 @@ Root-cause view:
 generation failures
 latency bucket
 photo rejection
-catalogue mismatch
+ownership rejection
+extraction confidence bucket
 abandonment
 
-Any displayed KPI that is seeded/demo data must be labeled accordingly.
+Any displayed KPI that is simulated or demo data must be labeled accordingly.

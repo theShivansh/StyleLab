@@ -1,30 +1,39 @@
-# PHASE 6 — Result + What-If Remix
+# PHASE 6 — Result + What-If Swap
 
 Build the strongest product moment.
 
 Result screen:
-- large generated look
-- style match card
-- item breakdown
-- price sum from known catalogue data
+- the composed look, laid out editorially from the user's own garment photos
+- style match card, labelled as a heuristic
+- item breakdown, each tracing to a wardrobe item the user owns
+- rationale from the ranker
 - save
 - share
-- shop
-- remix
+- swap
+- regenerate
 
-Remix:
-- select item slot
-- show 3–5 compatible candidates
+No price sum. No shop action. The product sells nothing — see `docs/DECISIONS.md`.
+
+Swap:
+- select a role slot
+- show compatible alternatives **from this user's wardrobe**
+- empty is a valid answer — name the gap and offer to add an item, never invent one
 - choose replacement
-- generate updated look
-- animate transition
-- preserve unchanged items
+- recompose that slot only
+- animate the transition
+- leave every unchanged item visually stable
 
 UX target:
-Changing one item must feel like changing a single parameter, not rebuilding the entire experience.
+Changing one item must feel like changing a single parameter, not rebuilding the
+experience.
+
+Also handle:
+- an item deleted out from under a saved outfit → outfit reports itself incomplete and
+  offers a swap; never a broken image or a silent gap
 
 Acceptance:
-- remix path is obvious
-- no full-page navigation for simple swaps
-- visual state never becomes inconsistent with selected SKU state
-- analytics fire for remix and swap
+- swap path is obvious
+- no full-page navigation for a simple swap
+- visual state never disagrees with wardrobe state
+- alternatives are always owned items, verified by ownership re-validation
+- analytics fire for swap, regenerate, and save

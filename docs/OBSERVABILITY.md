@@ -32,12 +32,13 @@ AI requests additionally:
 - model calls
 - success rate
 - schema failure rate
-- SKU grounding failure
+- unowned-item grounding failure
+- cross-user ownership rejection (alert, never retry)
 - median latency
 - retry rate
 - estimated cost
 
-### VTO
+### Extraction
 - jobs started
 - completed
 - failed
@@ -60,7 +61,7 @@ web request
 → API
 → recommendation
 → Groq
-→ VTO
+→ extraction
 → storage
 
 Do not place raw image payloads or sensitive user data in traces.

@@ -1,29 +1,37 @@
-# PHASE 5 — Virtual Try-On Job Pipeline
+# PHASE 5 — Upload + Async Image Analysis Pipeline
 
-Build a provider-agnostic VTO layer.
+This phase replaces the former virtual try-on pipeline. STYLELAB renders nothing: the
+result is a composed look made of the user's own garment photos. The async machinery that
+was going to serve try-on now serves extraction, which is the path that actually runs on
+every session.
 
 Implement:
-- upload asset handling
-- try-on request
-- async job creation
-- status endpoint
-- provider adapter
-- mock provider
-- error classification
-- retry policy
-- image storage abstraction
-- result persistence
+- multi-image upload in one gesture
+- per-image validation: MIME allow-list, byte ceiling, resolution bounds
+- **EXIF stripping on ingest, GPS included**
+- private object storage abstraction + short-lived signed URLs
+- `analyze_item` async job, one per image, running in parallel
+- job status endpoint with named stages
+- analyzer adapter boundary (interface from Phase 4)
+- checksum cache — re-uploading an unchanged image costs nothing
+- error classification and bounded retry
+- `item_extractions` persistence for successes and failures alike
+- soft delete cascading asset → item → dependent outfits
 
 Frontend:
-- meaningful generation stages
-- skeleton/preview
-- retry
-- curated fallback/demo result
+- progressive cards — each image resolves independently as its job finishes
+- named stages, never a bare spinner, and never one spinner over the whole batch
+- low-confidence fields visibly hedged and inline-correctable
+- a rejected image shows its own actionable error without disturbing the others
+- retry per image
 
-Do not couple frontend to a specific VTO vendor.
+Do not couple the frontend to a provider. Do not send a user's face or body photo
+anywhere — the product has no try-on path and no reason to hold one.
 
 Acceptance:
-- demo provider completes end-to-end
-- provider failures are recoverable
-- no blocked synchronous HTTP request for the long generation
+- the deterministic analyzer completes the full upload → wardrobe path with
+  `GROQ_API_KEY` unset
+- one failing image fails one card, never the batch
+- no blocking synchronous HTTP request for analysis
 - job status is observable
+- deleting an asset cascades correctly and reports which outfits became incomplete

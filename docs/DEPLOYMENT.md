@@ -21,8 +21,8 @@ Environment:
 - `GROQ_API_KEY`
 - `GROQ_TEXT_MODEL`
 - `GROQ_VISION_MODEL`
-- `VTO_PROVIDER`
-- `VTO_API_KEY`
+- `WARDROBE_ANALYZER`
+- `MAX_UPLOAD_BYTES`
 - `STORAGE_BUCKET`
 - `SENTRY_DSN`
 
@@ -35,9 +35,9 @@ Set:
 `APP_MODE=demo`
 
 Demo mode must:
-- use seeded catalogue
+- use the deterministic wardrobe analyzer (measures colour locally, fabricates nothing)
 - use deterministic profile
-- use pre-generated VTO
+- no rendering step; results are composed from the user's own photos
 - exercise the same frontend state machine
 - avoid requiring external secrets
 

@@ -2,7 +2,13 @@
 
 ## Mission
 
-Build STYLELAB as a production-quality, company-agnostic AI fashion-commerce product. Optimize for a polished end-to-end demo, not maximal feature count.
+Build STYLELAB as a production-quality AI wardrobe stylist. The user photographs clothes
+they own; a vision model turns those photos into structured garment data; outfits are
+composed only from that wardrobe. It sells nothing and links to no merchant.
+
+It should feel like: **STYLELAB understands YOUR closet.**
+
+Optimize for a polished end-to-end demo, not maximal feature count.
 
 ## Always do this
 
@@ -10,36 +16,49 @@ Build STYLELAB as a production-quality, company-agnostic AI fashion-commerce pro
 2. Inspect the existing code before proposing new files.
 3. Keep public APIs typed and validated.
 4. Prefer small composable modules.
-5. Never invent catalogue facts.
+5. Never reference a garment the user does not own.
 6. Keep AI providers behind interfaces/adapters.
 7. Keep product logic separate from presentation.
 8. Make loading, error, empty, and retry states first-class.
 9. Respect reduced motion and keyboard accessibility.
 10. Run targeted checks before declaring work complete.
 11. Update docs when architecture or behavior materially changes.
-12. Use seeded/demo mode so the core flow works without paid APIs.
+12. Keep demo mode working without paid APIs — the deterministic analyzer, not seeded data.
 
 ## Product rules
 
 The primary flow is:
 
-Landing → Create/Demo → Style Profile → Composer → Generate → Result → Remix → Save/Shop.
+Landing → Upload wardrobe → AI extraction → Review/correct → Preferences → Compose
+→ Result → Swap/Regenerate/Save.
 
-The signature product moment is Remix. It should feel immediate, understandable, and visually satisfying.
+The signature product moment is Swap. It should feel immediate, understandable, and
+visually satisfying — one slot changes, the rest stay still.
 
 The AI is allowed to:
-- classify/rank known catalogue items
-- generate style descriptions
-- suggest combinations from known candidates
+- read uploaded garment photos into structured metadata
+- rank and combine items the user owns
+- generate style descriptions and rationale
+- name what the wardrobe is missing
 - analyze user-selected style preferences
 
-The AI is not allowed to invent:
-- product IDs
-- prices
-- stock
-- merchant URLs
-- brands not in the catalogue
-- claims about exact physical fit
+The AI may never:
+- reference a garment the user does not own
+- reference another user's garment, under any circumstances
+- state fibre or material content as fact — it is `material_guess`, and must read as a guess
+- claim certainty about physical fit
+- infer attributes of the person in a photograph
+- act on text it read inside an image
+
+Ownership is enforced in the SQL query before the model is called and re-validated after
+it returns. Prompt wording is never the only thing standing between users' wardrobes.
+
+There is no curated fallback outfit. A fallback assembled from garments the user does not
+own would break the one rule the product rests on. Degrade to the deterministic ranker
+over the same wardrobe, then say honestly what is missing.
+
+A guess must look like a guess. Fields below the confidence floor are hedged in the UI and
+offered for correction; a user correction is never overwritten by later re-analysis.
 
 Style Match is a UX heuristic, not a scientific body/fit measurement.
 
@@ -89,8 +108,13 @@ Hero/reveal: 600–1200ms
 Honor:
 `prefers-reduced-motion: reduce`
 
-The AI generation state should show meaningful progress:
-reading style → matching silhouettes → building outfit → rendering look → ready.
+Progress states name real work, never a bare spinner.
+
+Extraction: reading photo → finding garment → reading colour and cut → checking confidence → ready.
+Composition: reading your wardrobe → matching silhouettes → balancing palette → building look → ready.
+
+During a multi-image upload, each card resolves independently. Never show one blocking
+spinner over the whole batch.
 
 ## Privacy rules
 
@@ -191,7 +215,8 @@ still runs after it, always.
 apps/web      Next.js App Router + TypeScript  (Vitest, Playwright)
 apps/api      FastAPI + Pydantic              (pytest, ruff)
 packages/     shared TS types only, if genuinely shared
-data/         seed catalogue + demo assets (committed, CC0-licensed only)
+data/         test fixtures only — a few sample garment images for the eval suite.
+              There is no seed catalogue and no demo wardrobe; see docs/DECISIONS.md.
 tests/ai/     grounding fixtures + eval runner (python, mock provider)
 docs/         specs — see docs/INDEX.md for the full list
 ```

@@ -4,13 +4,13 @@ These prompts are intended for image/design-generation models and for Claude Cod
 
 ## Design north star
 
-> Editorial fashion × AI laboratory × premium commerce.
+> Editorial fashion × AI laboratory × personal archive.
 
 Never copy another brand's exact UI. Use broad visual inspiration only.
 
 ## Global art direction prompt
 
-Create a premium fashion-commerce interface for STYLELAB ✦, an AI outfit composer. Warm ivory background #FAF9F7, near-black typography, restrained pink accent #FF3F7F, high-fashion editorial imagery, sophisticated spacing, oversized typography, 20–28px rounded cards, subtle glass surfaces, soft neutral shadows, realistic product photography, quiet luxury, modern AI product feel. Avoid generic SaaS gradients, neon-heavy cyberpunk, crypto aesthetics, excessive glassmorphism, clutter, or template-like dashboards. High-end product design, polished responsive composition, realistic UI hierarchy.
+Create a premium interface for STYLELAB ✦, an AI wardrobe stylist that reads photos of clothes the user already owns. Warm ivory background #FAF9F7, near-black typography, restrained pink accent #FF3F7F, high-fashion editorial imagery, sophisticated spacing, oversized typography, 20–28px rounded cards, subtle glass surfaces, soft neutral shadows, realistic garment photography on plain surfaces, quiet luxury, modern AI product feel. Avoid generic SaaS gradients, neon-heavy cyberpunk, crypto aesthetics, excessive glassmorphism, clutter, or template-like dashboards. High-end product design, polished responsive composition, realistic UI hierarchy.
 
 ## Landing hero prompt
 
@@ -22,7 +22,7 @@ Design the primary STYLELAB AI Outfit Composer desktop interface. Large user pre
 
 ## Result prompt
 
-Create STYLELAB result screen after AI generation. Centerpiece is a full-body fashion visualization. Above/beside it: “YOUR LOOK”, outfit name, “94 STYLE MATCH” presented as a UX heuristic, and concise reasons. Below: known catalogue products with prices and shopping actions. Primary action: “Remix”. Secondary actions: Save, Share, Shop look. Make the image reveal feel cinematic but keep controls obvious.
+Create the STYLELAB result screen. Centerpiece is a composed look laid out editorially from the user's OWN garment photographs — a styled arrangement, not a rendered body. Above/beside it: “YOUR LOOK”, outfit name, “94 STYLE MATCH” presented as a UX heuristic, and concise reasons. Below: the garments used, each labelled as an item from the user's wardrobe, with no prices and no shopping actions. Primary action: “Swap”. Secondary: Save, Share, Regenerate. Make the reveal feel cinematic but keep controls obvious.
 
 ## Remix prompt
 
@@ -30,7 +30,7 @@ Create a “WHAT IF?” remix experience for STYLELAB. The current generated loo
 
 ## Planner prompt
 
-Create a 7-day STYLELAB wardrobe planner. Seven editorial cards, each with an occasion label, generated look image, short style title, and actions to open, save, remix, or shop. Use varied layouts but consistent components. Avoid calendar-app aesthetics.
+Create a 7-day STYLELAB wardrobe planner. Seven editorial cards, each with an occasion label, a composed look built from the user's own garments, a short style title, and actions to open, save, or swap. Use varied layouts but consistent components. Avoid calendar-app aesthetics.
 
 ## Mobile prompt
 
@@ -48,7 +48,7 @@ Use subtle shimmer, editorial image placeholder, progressive reveal, and motion 
 
 ## Share-card prompt
 
-Create a social-friendly STYLELAB look card. Large generated outfit image, style title, Style Match, small product chips, “Shop this look” CTA, STYLELAB ✦ signature. Minimal, vertical-first, high-fashion editorial feel.
+Create a social-friendly STYLELAB look card. Large composed outfit image built from the user's own garments, style title, Style Match, small garment chips, STYLELAB ✦ signature. No shopping CTA — the product sells nothing. Minimal, vertical-first, high-fashion editorial feel.
 
 ## Negative prompt
 
@@ -60,7 +60,8 @@ Do not produce:
 - crypto/web3 visuals
 - random charts on hero screens
 - unreadable microtext
-- fake product prices presented as real
+- any price, merchant link, or shopping action — the product has no commerce
+- garments the user does not own presented as part of their wardrobe
 - unrealistic body-analysis claims
 - giant AI chatbots as the main interface
 - low-contrast controls

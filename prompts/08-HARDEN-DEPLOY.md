@@ -41,4 +41,6 @@ Finally update:
 - demo script
 
 Acceptance:
-A recruiter can open the app, use demo mode, understand the value, experience compose→visualize→remix, and reach a polished result without needing a private retailer account.
+A recruiter can open the app, upload a handful of their own garment photos, watch them
+become a structured wardrobe, and reach a composed outfit they can swap — with no account
+and no credentials. See docs/DEMO-SCRIPT.md for the 90-second timing budget.

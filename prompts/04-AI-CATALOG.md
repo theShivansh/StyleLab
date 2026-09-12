@@ -1,33 +1,44 @@
-# PHASE 4 — Catalogue + AI Recommendation Layer
+# PHASE 4 — Wardrobe Domain + AI Recommendation Layer
 
-Build the domain layer.
+Build the domain layer. No Groq in this phase — interfaces and mocks only. Phase 12
+wires the real provider in behind them.
 
 Implement:
-- garment schema
-- catalogue repository
-- deterministic filtering
+- `wardrobe_item` schema and repository
+- **ownership-scoped retrieval** — every query filters on `user_id`; there is no
+  unscoped read path, not even for admin or debug
+- deterministic filtering by role and compatibility
 - compatibility scoring
-- LLM adapter
-- structured output schema
-- outfit ranker
-- validation that every returned product ID exists
+- `WardrobeAnalyzer` interface + `DeterministicWardrobeAnalyzer`
+- `OutfitRanker` interface + `DeterministicRanker`
+- structured output schemas for extraction and for ranking
+- ownership re-validation of every model-returned item ID
+- `item_extractions` audit writes, including rejected attempts
+- `corrected_fields` handling — a user correction is never recomputed
+- insufficient-wardrobe detection that names the missing roles
 
 Preferred scoring:
-style compatibility
-colour harmony
-silhouette balance
-occasion fit
-preference match
-trend score
+style compatibility · colour harmony · silhouette balance · occasion fit ·
+preference match · wardrobe variety
 
-The LLM may rank/explain candidates but may never invent SKU data.
+The LLM may rank and explain candidates. It may never introduce an item ID that was not
+in the retrieved candidate set.
 
-Add tests for:
-- invalid SKU rejection
+The deterministic analyzer must do real work, not return canned data: measure dominant
+colour and image quality from the pixels, take category from the user's upload hint, and
+leave everything else null at `confidence: 0`. It must satisfy the same schema as the
+live analyzer. See `docs/AI-SYSTEM.md`.
+
+Add tests for — **write them red first, then green**:
+- an item ID outside the candidate set is rejected
+- **an item belonging to another user is rejected even when injected into a crafted
+  model response** (`docs/AI-EVAL-CASES.md` Case 11)
 - incompatible category combinations
-- deterministic filtering
-- schema validation
-- stable ranking
+- insufficient wardrobe returns a named gap, never a partial outfit
+- a corrected field survives re-analysis
+- deterministic filtering is stable
+- schema validation rejects malformed and truncated output
 
 Acceptance:
-Given a style profile + selected garments, return a valid outfit composed only of known catalogue items.
+Given a user's wardrobe and a style profile, return a valid outfit composed only of items
+that user owns — or an honest statement of what is missing. There is no curated fallback.

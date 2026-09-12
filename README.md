@@ -1,32 +1,37 @@
-# STYLELAB ✦ — AI Outfit Composer
+# STYLELAB ✦ — AI Wardrobe Stylist
 ## Claude Code / Codex-ready Production Build Kit
 
-STYLELAB is a company-agnostic AI fashion-commerce experience that turns product discovery into visual outfit composition.
+STYLELAB reads photographs of clothes you already own, turns them into a structured
+wardrobe, and styles outfits from it. It sells nothing and links to no merchant.
+
+> **STYLELAB understands YOUR closet.**
 
 ### Core loop
 
-Discover → Compose → Visualize → Remix → Save/Shop
+Upload → Extract → Review/correct → Compose → Swap → Save
 
 ### Signature features
 
-1. AI Outfit Composer
-2. Groq-powered style/product intelligence
-3. Groq multimodal image understanding
-4. AI-generated Virtual Try-On through a provider adapter
-5. What-If Remix
-6. Personalized Style Profile
-7. 7-Day Outfit Planner
-8. Catalogue-grounded recommendations
-9. Product intelligence analytics
-10. Demo Mode with deterministic seeded results
-11. AI evaluation harness
-12. Automated unit/integration/E2E/accessibility testing
+1. Multi-image wardrobe capture in one gesture
+2. Groq multimodal garment extraction into structured metadata
+3. Per-field confidence, with correction as a first-class interaction
+4. Ownership-scoped outfit composition — only items you own
+5. What-If swap, one slot at a time
+6. Personalised style profile
+7. Wardrobe gap detection ("you have no footwear yet")
+8. Extraction audit trail — what the model claimed, what was rejected
+9. 7-Day outfit planner *(P1, cuttable)*
+10. Demo mode that runs with no credentials and fabricates nothing
+11. AI evaluation harness, including cross-user isolation
+12. Automated unit / integration / E2E / accessibility testing
 
 ### Product positioning
 
-> A reusable AI commerce layer that sits on top of a fashion catalogue and helps shoppers visualize, remix, and shop complete outfits.
+> A personal wardrobe intelligence layer: it makes the clothes you own legible to
+> software, then styles them.
 
-This is an independent portfolio/startup concept. Do not represent it as an official retailer product or integration.
+An independent portfolio concept. It has no retailer affiliation and makes no commerce
+claims of any kind.
 
 ---
 
@@ -34,83 +39,66 @@ This is an independent portfolio/startup concept. Do not represent it as an offi
 
 **Groq is the default AI provider.**
 
-Recommended current Groq configuration:
-- `qwen/qwen3.8-27b` for multimodal style/image understanding where preview-model use is acceptable.
-- `openai/gpt-oss-120b` for strong structured text reasoning / outfit orchestration.
-- use Groq Structured Outputs with JSON Schema where supported.
-- keep model IDs in environment/config rather than hardcoding across the codebase.
+- `GROQ_TEXT_MODEL` — `openai/gpt-oss-120b` for structured reasoning and ranking
+- `GROQ_VISION_MODEL` — garment extraction; **the default is an open decision, see
+  `docs/DECISIONS.md`** before S5
+- Groq Structured Outputs with JSON Schema where supported
+- Model IDs live in `.env.example` and the adapter config. Nowhere else.
 
-Groq's current documentation lists Qwen 3.8 27B as multimodal with vision, tool use, JSON Schema mode and reasoning; Groq also documents strict Structured Outputs for selected models including GPT-OSS 120B and Qwen 3.8 27B.
+Verify configured model IDs against Groq's live model list at boot in production, and
+fail loudly there rather than at a user's first request — Groq has deprecated models on
+weeks of notice.
 
-The system must still validate every model result against the application schema and against the real product catalogue.
+### The grounding rule
 
-### AI grounding rule
+```text
+LLM     → ranking, rationale, and attribute extraction only
+Database → source of truth for what the user owns
+```
 
-LLM → candidate ranking/attributes only
-Database → source of truth for product IDs, prices, URLs, active state
+The LLM may never reference:
+- an item the user does not own
+- **an item belonging to another user**
+- fibre or material content stated as fact rather than estimate
+- any attribute of the person in a photograph
 
-The LLM may never invent:
-- SKU
-- price
-- stock
-- URL
-- merchant
-- product claims
+Ownership is enforced in the SQL query **before** the model is called, and re-validated
+after it returns. Prompt wording is never the only thing standing between two users'
+wardrobes.
 
 ---
 
-## “Not a gimmick” standards
+## "Not a gimmick" standards
 
-The project is not considered complete because it has a pretty UI.
-
-It must demonstrate:
+A pretty UI does not make this complete.
 
 ### Product integrity
-- clear user problem
-- measurable hypothesis
-- analytics funnel
-- root-cause analysis
-- experimentation plan
+clear user problem · measurable hypothesis · analytics funnel · root-cause analysis ·
+experimentation plan
 
 ### Engineering integrity
-- typed APIs
-- schema validation
-- provider adapters
-- async jobs
-- retries/timeouts
-- database constraints
-- observability
-- automated tests
+typed APIs · schema validation · provider adapters · async jobs · retries/timeouts ·
+database constraints that make cross-user leakage unrepresentable · observability ·
+automated tests
 
 ### AI integrity
-- deterministic candidate retrieval
-- structured model outputs
-- model/evaluation fixtures
-- hallucination checks
-- invalid-SKU rejection
-- fallback behavior
-- latency/cost logging
+deterministic candidate retrieval · structured model outputs · evaluation fixtures ·
+hallucination checks · **unowned-item rejection** · **cross-user isolation** ·
+extraction honesty · fallback behaviour · latency/cost logging
 
 ### UX integrity
-- loading/error/empty states
-- responsive layout
-- keyboard navigation
-- reduced motion
-- privacy controls
-- graceful generation failures
+loading / error / empty states · responsive layout · keyboard navigation · reduced
+motion · privacy controls · graceful extraction failures · correction affordances
 
 ### Demo integrity
-- complete demo path without private credentials
-- pre-generated VTO fallback
-- clearly labeled demo metrics
-- no fake retailer affiliation
+complete path without private credentials · a demo analyzer that measures rather than
+fabricates · clearly labelled demo metrics · no commerce or retailer claims
 
 ---
 
 ## Design system
 
-Visual target:
-editorial fashion × AI laboratory × premium commerce.
+Visual target: editorial fashion × AI laboratory × personal archive.
 
 Base:
 - warm ivory `#FAF9F7`
@@ -119,22 +107,16 @@ Base:
 - soft neutrals
 - 20–28px rounded cards
 - large typography
-- editorial imagery
+- the user's own garment photography as the imagery
 - restrained glass effects
 
 Libraries:
-- Next.js
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
-- Skiper UI
-- Vengeance UI
-- Motion
-- Lucide
-- Zustand
-- TanStack Query
+Next.js · TypeScript · Tailwind CSS · shadcn/ui · Vengeance UI · Skiper UI · Motion ·
+Lucide · Zustand · TanStack Query
 
-Use vendor UI selectively and wrap it with local components.
+Both UI libraries are shadcn source-drop registries, verified 2026-09-12 — see
+`docs/DECISIONS.md` for licence terms and conditions of use. Wrap vendor components with
+local ones.
 
 ---
 
@@ -142,28 +124,28 @@ Use vendor UI selectively and wrap it with local components.
 
 0. Foundation
 1. Design system + landing
-2. Onboarding + composer
-3. Catalogue + recommendation engine
-4. Groq AI layer + vision analysis
-5. VTO async pipeline
-6. Result + Remix
+2. Wardrobe onboarding + composer
+3. Wardrobe domain + recommendation engine
+4. Groq AI layer + garment extraction
+5. Upload + async analysis pipeline
+6. Result + Swap
 7. Planner + analytics
 8. AI evaluation
 9. QA + security + accessibility + performance
 10. Deployment + portfolio case study
 
+See `prompts/README.md` for the authoritative session order and `docs/PROGRESS.md` for
+current state.
+
 ---
 
 ## Definition of Done
 
-A release is done only when:
 - production build passes
-- unit tests pass
-- API contract tests pass
-- E2E critical flow passes
+- unit, API contract, and critical E2E tests pass
 - accessibility checks pass
-- no high-severity security issue is open
-- AI evaluation fixtures pass
-- demo flow works without paid/private integrations
-- loading/error/empty states exist
-- documentation is synchronized
+- no high-severity security issue open
+- AI evaluation fixtures pass, **cross-user isolation included**
+- the full path works with `GROQ_API_KEY` unset
+- loading / error / empty states exist
+- documentation is synchronised

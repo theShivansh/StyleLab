@@ -133,3 +133,71 @@ Follow-up:
    zero vendor coupling. Wrap each one behind `components/motion/*` per UX-UI-SPEC so
    the app stays replaceable, and record the upstream name + SHA in a header comment.
 3. Re-check both before S11 (harden + deploy). Neither has a stability guarantee.
+
+---
+
+### 2026-09-12 — Wardrobe pivot: user-uploaded closet replaces the seeded catalogue
+
+Context:
+The build was blocked on two asset problems: B1 (~60 fictional garments with imagery and
+commerce metadata) and B2 (~14 pre-generated try-on assets). Both were asset work Claude
+Code could not do, and the demo was worthless without them.
+
+Decision:
+Replace the seeded commerce catalogue with a user-uploaded personal wardrobe.
+
+```text
+USER-UPLOADED WARDROBE → IMAGE ANALYSIS → STRUCTURED GARMENT METADATA
+→ PERSONAL WARDROBE → AI OUTFIT RECOMMENDATION → SAVE / EDIT / SWAP / REGENERATE
+```
+
+The product should feel like: **STYLELAB understands YOUR closet.**
+
+Three sub-decisions taken with it:
+
+1. **No demo wardrobe.** Every user, recruiter included, uploads their own garments.
+   B1 and B2 are closed outright; the project ships zero garment assets.
+2. **Commerce removed entirely.** No prices, no merchant URLs, no add-to-bag. The
+   `garments` table loses `brand`, `price`, `commerce_url`, `active`.
+3. **No rendering.** The result is a composed look laid out from the user's own garment
+   photographs. The VTO provider and its adapter are gone.
+
+Alternatives considered and rejected:
+- a pre-built demo closet (~15 items) preserving the 90-second credential-free path
+- "shop the gap" commerce retained as P1
+- mock VTO retained to preserve the provider-adapter story
+
+Why:
+It removes the only blockers Claude Code could not clear, it gives `GROQ_VISION_MODEL` a
+genuine central role rather than a decorative one, and "styles what you already own" is a
+sharper product than "helps you buy more clothes".
+
+Trade-offs — all three are real and accepted:
+
+- **Cold start is now the product's largest risk.** With no demo wardrobe, a first-time
+  user sees nothing until they upload. The plan's hardest success criterion — "a stranger
+  reaches a generated look in under 90 seconds with zero credentials" — now depends on a
+  live upload succeeding in front of an interviewer. Mitigation: `docs/DEMO-SCRIPT.md`
+  carries a per-beat timing budget and requires the presenter to stage their own garment
+  photos in advance. The demo is the presenter's real closet.
+- **The provider-adapter story moves rather than disappears.** It now lives on
+  `WardrobeAnalyzer`, which is exercised on every single session instead of only in the
+  try-on path. Arguably a stronger demonstration.
+- **Grounding gets harder, and better.** "Never invent a SKU" becomes "never reference an
+  item this user does not own" — which is also a security boundary. Cross-user isolation
+  (`AI-EVAL-CASES.md` Case 11) replaces price integrity as the headline eval case.
+
+Follow-up:
+1. Demo mode must complete with `GROQ_API_KEY` unset and no seeded data. Resolved by
+   `DeterministicWardrobeAnalyzer`, which measures colour and image quality from actual
+   pixels and takes category from the user's upload hint, leaving everything else null at
+   confidence 0. Nothing is fabricated, so the credential-free demo makes no claim the
+   code cannot support. Specified in `docs/AI-SYSTEM.md`.
+2. Ownership is enforced in SQL before the prompt and re-validated after, with a composite
+   foreign key making cross-user references unrepresentable at the schema level.
+3. Specs updated in the same commit: PRD, USER-FLOWS, DATA-MODEL, AI-SYSTEM,
+   AI-EVAL-CASES, ARCHITECTURE, API-SPEC, ANALYTICS, SECURITY-PRIVACY, TESTING,
+   QA-RELEASE, DEMO-SCRIPT, UX-UI-SPEC, DESIGN-PROMPT-SYSTEM, DEPLOYMENT, OBSERVABILITY,
+   DEVELOPMENT-PLAN, README, AGENTS, CLAUDE.md, and prompts 03/04/05/06/07/08/10/11/12.
+4. Privacy scope grew: closet photographs are taken indoors and carry incidental
+   background. EXIF including GPS is stripped on ingest; see `docs/SECURITY-PRIVACY.md`.

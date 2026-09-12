@@ -26,7 +26,8 @@ Provide deterministic mocks for CI/demo.
 
 Ground every product recommendation in known catalogue objects.
 
-No hallucinated SKU, price, URL or availability.
+No item the user does not own, and none belonging to another user. No attribute the
+model guessed presented as an observed fact.
 
 Use:
 deterministic candidate retrieval

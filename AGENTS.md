@@ -10,7 +10,9 @@ Read:
 
 ## Mission
 
-Build STYLELAB as a production-minded, company-agnostic AI fashion-commerce application.
+Build STYLELAB as a production-minded AI wardrobe stylist: the user photographs clothes
+they own, a vision model extracts structured garment data, and outfits are composed only
+from that wardrobe. No commerce, no merchant links, no try-on rendering.
 
 ## Priorities
 
@@ -30,18 +32,19 @@ Text:
 `openai/gpt-oss-120b`
 
 Vision:
-`qwen/qwen3.8-27b`
+garment extraction — default model ID is an open decision, see docs/DECISIONS.md
 
 Do not hardcode model IDs throughout the app. Read configuration from environment.
 
 Never trust model output.
-Validate structured output and then validate catalogue/business rules.
+Validate structured output, then business rules, then ownership — every item ID must
+belong to the requesting user. Scope retrieval in SQL, not in prompt text.
 
 ## UI
 
-Use Skiper UI and Vengeance UI selectively.
-Do not invent an Animaster package.
-Inspect exact source/package before integrating it.
+Use Vengeance UI (primary) and Skiper UI (secondary, free tier, attribution required).
+"Animaster" does not exist — do not import it. Both approved libraries are shadcn
+source-drop registries; see docs/DECISIONS.md for terms. Inspect source before integrating.
 
 ## Tests
 

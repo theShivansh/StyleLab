@@ -12,7 +12,7 @@ confident, editorial, playful, intelligent.
 
 ## Visual direction
 
-Editorial fashion × AI lab × premium commerce.
+Editorial fashion × AI lab × personal archive.
 
 ### Color tokens
 
@@ -96,19 +96,19 @@ Almost ready
 ### 5. Result
 
 Primary visual:
-generated look
+composed look, built from the user's own garment photos
 
 Secondary:
-Style Match
-outfit item list
-total
+Style Match (labelled a heuristic)
+outfit item list, each tracing to an owned item
+rationale
 save
-shop
+share
 
 Primary interaction:
-Remix
+Swap
 
-### 6. Remix
+### 6. Swap
 
 “What if?”
 
@@ -124,7 +124,7 @@ replace one item → update look → show new result
 ### 7. Planner
 
 7-day cards
-with occasion labels and quick shop/save actions.
+with occasion labels and quick swap/save actions.
 
 ## Motion
 
@@ -175,7 +175,7 @@ Example:
 ```text
 components/motion/GenerateButton.tsx
 components/motion/LookReveal.tsx
-components/catalog/ProductCard.tsx
+components/wardrobe/GarmentCard.tsx
 components/composer/RemixSheet.tsx
 ```
 

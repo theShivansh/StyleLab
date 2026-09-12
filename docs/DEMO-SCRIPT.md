@@ -1,45 +1,80 @@
 # STYLELAB Demo Script
 
+There is no demo wardrobe. The demo is **your own closet** — photograph 6-8 of your
+garments once, keep them in a folder on the demo machine, and upload them live. That is
+authentic, it needs no fabricated catalogue, and the interviewer watches real extraction
+run on real clothes.
+
+## Preparation (once, ~15 minutes)
+
+- 6-8 garment photos: 2-3 tops, 2 bottoms, 1-2 footwear, 1 outerwear. Plain background,
+  even light, one garment per frame.
+- Keep one deliberately imperfect photo — dim or cropped. You will use it.
+- Folder on the desktop, named, open before you start.
+- Verify `APP_MODE=demo` runs with `GROQ_API_KEY` unset. If you are demoing live Groq,
+  verify the key and the model IDs that morning.
+
 ## 30-second pitch
 
-“STYLELAB is an AI commerce layer that solves a simple problem: shoppers can find individual products, but they still have to mentally assemble the outfit. I built a flow that composes a look, visualizes it, and lets the shopper remix one item without starting over.”
+"STYLELAB reads a photo of your clothes and turns your actual closet into structured
+data, then styles outfits only from what you own. The interesting engineering problem
+isn't the styling — it's that a vision model produces guesses, and everything downstream
+has to stay honest about which parts are measured, which are guessed, and which the user
+corrected."
 
-## 60-second walkthrough
+## 90-second walkthrough — the timing budget
 
-1. Open landing.
-2. Tap Explore Demo.
-3. Accept seeded style profile.
-4. Select 3 garments.
-5. Compose.
-6. Show meaningful AI generation stages.
-7. Reveal generated look.
-8. Point to Style Match as a heuristic.
-9. Tap What If?
-10. Replace bottom.
-11. Show transition and updated result.
+| Window | Beat | Watch for |
+|--------|------|-----------|
+| 0-10s | Landing → Start my wardrobe | one tap, no signup |
+| 10-25s | Select all 8 photos at once | single gesture, not 8 dialogs |
+| 25-55s | Analysis runs in parallel; cards appear as each finishes | never one blocking spinner |
+| 55-65s | Skim the cards. Land on the dim photo — it is flagged low-confidence | the hedge, not a confident wrong answer |
+| 65-72s | Correct one field on purpose. "It called this black; it's navy." | correction is a feature, not an apology |
+| 72-80s | Occasion + vibe, tap through the defaults | skippable |
+| 80-90s | Compose → outfit with rationale | grounded in the items just uploaded |
+
+Encore, after the 90 seconds: **What If? → swap the bottom.** One slot changes, the rest
+stay still, no page navigation.
+
+If analysis is slower than budget, cut to 5 photos. Do not cut the correction beat — it
+is the most differentiated moment in the run.
 
 ## 120-second technical walkthrough
 
-Explain:
-- catalogue-first grounding
-- Groq structured outputs
-- Groq vision for image understanding
-- provider abstraction for VTO
-- async generation jobs
-- deterministic ranker
-- analytics funnel
-- AI evaluation fixtures
-- fallback mode
+- ownership enforced in SQL before the prompt, re-validated after — not asked for in
+  prompt text
+- vision extraction → JSON Schema → Pydantic → business validation → ownership validation
+- per-field confidence, and what the UI does below the confidence floor
+- `corrected_fields` survives re-analysis
+- demo analyzer measures colour from pixels rather than faking metadata, so the
+  credential-free path still makes no claim the code can't support
+- adapter boundary: `git grep -i groq` outside `adapters/` returns nothing
+- async per-image jobs, partial-batch success
+- the eval fixtures — especially cross-user isolation and injection-via-image
+
+## The two moments to actually show
+
+**Grounding.** Open the extraction audit for one item: what the model returned, what was
+rejected, why. Then force the model to name an item the user doesn't own and show the
+app refusing it. This is worth more than any feature in the build.
+
+**Insufficient wardrobe.** Delete the only footwear and compose again. The app says what
+is missing instead of inventing a shoe. Interviewers remember the system that declines.
 
 ## Claims discipline
 
 Say:
-- “portfolio concept”
-- “measured in our test/demo environment”
-- “hypothesis to validate”
+- "portfolio concept"
+- "measured in our demo environment"
+- "hypothesis to validate"
+- "the model guessed this; the user corrected it"
 
 Do not say:
-- official retailer integration
-- actual retailer KPI lift
-- production customer counts
-unless independently verified.
+- retailer integration or affiliation of any kind
+- real user or customer numbers
+- that material or fibre content is known rather than estimated
+- that this measures body shape or fit
+
+The product sells nothing and links to no merchant. If a question heads toward commerce,
+say it was deliberately scoped out and why.

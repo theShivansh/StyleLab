@@ -2,81 +2,98 @@
 
 ## Event naming
 
-snake_case
-
-All events include:
-- schema_version
-- session_id
-- timestamp
+snake_case. All events include `schema_version`, `session_id`, `timestamp`.
 
 ## Core events
 
+Wardrobe capture:
 - landing_view
-- composer_started
-- photo_uploaded
-- photo_rejected
+- wardrobe_start_clicked
+- images_selected            *(count)*
+- image_uploaded
+- image_rejected             *(reason)*
+- extraction_started
+- extraction_completed       *(confidence bucket, duration)*
+- extraction_failed          *(error code)*
+- extraction_field_corrected *(field name, from → to)*
+- item_deleted
+
+Composition:
 - style_profile_completed
-- garment_selected
-- outfit_generate_clicked
-- generation_started
-- generation_completed
-- generation_failed
+- compose_clicked
+- composition_started
+- composition_completed
+- composition_failed
+- insufficient_wardrobe      *(missing roles)*
 - outfit_viewed
 - item_swapped
-- remix_clicked
+- outfit_regenerated
 - outfit_saved
-- item_clicked
-- add_to_bag_clicked
 - outfit_shared
 - session_completed
+
+Removed with the commerce scope: `item_clicked`, `add_to_bag_clicked`,
+`garment_selected`, `remix_clicked`, `generation_*`.
 
 ## Funnel
 
 ```text
 Landing
-→ Composer started
-→ Photo uploaded
+→ Wardrobe started
+→ Images uploaded
+→ Extraction completed
 → Style completed
-→ Generate
-→ Generation complete
-→ Result viewed
-→ Remix/product interaction
-→ Save/shop
+→ Compose
+→ Outfit viewed
+→ Swap / Save
 ```
+
+The drop-off that matters most is Landing → Images uploaded. With no demo wardrobe, that
+step is the entire cold-start risk (`docs/PRD.md` §11) — instrument it finely enough to
+see *where* in the upload people quit.
 
 ## Dashboard
 
 KPIs:
-- activation rate
-- generation success
-- median generation duration
-- remix rate
+- upload completion rate
+- median items per first session
+- **extraction acceptance rate** — fields kept vs corrected
+- extraction failure rate
+- median analysis latency per image
+- time to first outfit
+- swap rate
 - save rate
-- product CTR
-- add-to-bag intent
+- insufficient-wardrobe rate
 - session completion
+
+Extraction acceptance rate is the honest quality signal for the AI. A high correction
+rate is information, not embarrassment — show it.
 
 ## Root cause view
 
 Break failures by:
-- photo validation
+- image validation reason
+- extraction confidence bucket
+- provider failure vs schema failure vs ownership rejection
 - latency bucket
-- provider failure
-- catalogue mismatch
-- user abandonment
+- missing-role type
+- user abandonment point
 
-## Analytics implementation rule
+## Implementation rule
 
-Create a typed `AnalyticsClient` abstraction.
-
-Do not scatter vendor-specific event APIs across React components.
+Create a typed `AnalyticsClient` abstraction. Do not scatter vendor event APIs across
+React components.
 
 ## Data hygiene
 
 Never send:
-- raw image URLs when not required
+- image URLs, signed or otherwise
+- image content or derived thumbnails
 - secrets
 - free-form sensitive user content
-- inferred sensitive attributes
+- inferences about the person in a photo
 
-Use stable anonymous/user identifiers appropriate to the environment.
+`extraction_field_corrected` carries field names and garment attribute values only
+("black" → "navy"). That is wardrobe metadata, not personal data — keep it that way.
+
+Use stable anonymous identifiers appropriate to the environment.

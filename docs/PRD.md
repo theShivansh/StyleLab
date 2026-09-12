@@ -2,153 +2,153 @@
 
 ## 1. Product summary
 
-STYLELAB is an AI-assisted outfit composition layer for fashion-commerce experiences.
+STYLELAB turns a photo of your clothes into a wardrobe that understands itself, then
+styles outfits from what you already own.
 
-It helps shoppers:
-- understand how products work together
-- visualize outfits on themselves
-- explore alternatives without restarting
-- save complete looks
-- convert product browsing into outfit-level decisions
+Upload a few garments. A vision model reads each one into structured metadata. That
+becomes your personal wardrobe, and every outfit STYLELAB proposes is assembled only
+from items in it.
+
+The product should feel like: **STYLELAB understands YOUR closet.**
 
 ## 2. Problem
 
-Online fashion discovery is item-centric while purchase decisions are outfit-centric.
+Most style tools recommend things to buy. The harder, more common problem is standing in
+front of clothes you already own and not seeing the outfit in them.
 
-Users can find a shirt they like but still need to decide:
-- what bottom matches it
-- what shoes work
-- whether the overall look suits the intended occasion
-- whether they can imagine themselves wearing it
+Existing wardrobe apps fail on the entry cost: cataloguing a closet by hand is tedious
+enough that nobody finishes. Automatic extraction from photographs is what makes a
+personal wardrobe viable at all — it is the feature, not a convenience on top of one.
 
-The product hypothesis is that reducing this composition/visualization burden can increase meaningful product interaction and purchase confidence.
-
-Do not claim unvalidated abandonment or conversion statistics as facts.
+Do not claim unvalidated statistics about wardrobe utilisation or decision fatigue.
 
 ## 3. Target users
 
-### A — “What goes with this?” shopper
-Wants quick combinations.
+### A — Owns plenty, wears a fraction
+Wants to rediscover combinations already in the closet.
 
-### B — Fast shopper
-Wants a complete look with minimal browsing.
+### B — Decision-fatigued
+Wants a defensible answer to "what do I wear today" in seconds.
 
 ### C — Experimenter
-Wants remixing, trend exploration, and alternatives.
+Wants to remix, swap, and explore alternatives within what they own.
 
 ## 4. Jobs to be done
 
-“When I like a fashion item but do not know what to pair with it, help me quickly create a complete look that feels like me.”
+"When I look at my own clothes and see nothing to wear, show me a combination I own but
+had not considered."
 
-“When I am uncertain about a look, let me visualize it before I buy.”
+"When I like an outfit but want one change, let me swap a single item without rebuilding it."
 
-“When I like an outfit but want one change, let me swap an item without rebuilding everything.”
+"When I photograph my clothes, do the cataloguing for me — and let me fix what you get wrong."
 
 ## 5. Product goals
 
 Primary:
-- increase outfit-level engagement
-- reduce time to first complete look
-- improve recommendation interaction
-- increase multi-item shopping intent
-- learn user style preferences
+- make wardrobe capture fast enough to actually complete
+- produce outfits that are unambiguously grounded in owned items
+- make correcting the AI feel like part of the product, not an apology for it
+- reduce time to first complete outfit
+- learn style preferences from swaps and saves
 
 Secondary:
-- make trend discovery actionable
-- turn generated outfits into shareable content
-- create a reusable commerce intelligence layer
+- surface genuine wardrobe gaps
+- make outfits shareable
+- make the extraction audit trail inspectable
 
 ## 6. Non-goals
 
 MVP does not aim to:
-- perfectly simulate fabric physics
-- provide medically or scientifically precise body analysis
-- build live AR video try-on
-- replace merchant checkout
-- scrape private retailer systems
+- sell anything, or link to any merchant
+- simulate fabric physics
+- provide body analysis or size intelligence
+- build live AR or video try-on
+- render photorealistic try-on images
 - train a foundation model
+
+Commerce was deliberately removed — see `docs/DECISIONS.md` (2026-09-12).
 
 ## 7. MVP feature set
 
 ### P0
 - landing
-- demo mode
-- photo upload
+- multi-image wardrobe upload
+- image validation
+- AI garment extraction with per-field confidence
+- extraction review and correction
+- wardrobe browse / edit / archive
 - style preferences
-- product catalogue
-- outfit composer
-- AI ranking
-- async VTO
-- result screen
-- remix
+- outfit composition grounded in the wardrobe
+- outfit result with rationale
+- swap one slot
+- regenerate
 - save
-- mock commerce CTA
+- insufficient-wardrobe handling
 - analytics
 
 ### P1
 - 7-day planner
 - shareable look cards
-- preference learning
-- trend insights
+- preference learning from swaps
+- wardrobe gap insights
 
 ### P2
-- live camera/AR
-- real merchant integrations
+- live camera capture
+- generative try-on rendering
 - size intelligence
-- advanced fit simulation
+- outfit sharing between users
 - creator tooling
 
 ## 8. Core user flow
 
-Landing
-→ Create/Demo
-→ Photo
-→ Style profile
-→ Product selection
-→ Compose
-→ AI generation
-→ Result
-→ Remix/Save/Shop
+Landing → Upload → Analysis → Review → Preferences → Compose → Result → Swap / Save
 
 ## 9. Success metrics
 
 North Star:
-Successful Outfit Session Rate
+**Wardrobe-to-Outfit Completion Rate** — sessions that upload at least three items and
+reach a saved or swapped outfit.
 
-A successful session:
-- generates an outfit
-- interacts with the result
-- saves or expresses shopping intent
-
-Supporting metrics:
-- activation rate
-- generation success rate
+Supporting:
+- upload completion rate
+- median items per first session
+- extraction acceptance rate *(fields kept vs corrected)*
 - time to first outfit
-- remix rate
+- swap rate
 - save rate
-- product CTR
-- add-to-bag intent
-- session completion
-- generation failure rate
-- average generation latency
+- regeneration rate
+- insufficient-wardrobe rate
+- extraction failure rate
+- median analysis latency per image
+
+Extraction acceptance rate is the honest quality signal. Track it from day one; a high
+correction rate is information, not embarrassment.
 
 ## 10. Experiment backlog
 
 A/B:
-- 3 vs 5 suggested looks
-- “Try On” vs “See Yourself In It”
-- instant demo vs forced upload
-- save-first vs shop-first result layout
+- 3 vs 6 items requested at onboarding
+- review-before-compose vs compose-then-correct
+- confidence shown numerically vs as a hedge in wording
+- swap-first vs save-first result layout
 
 ## 11. Risks
 
-AI quality, latency, privacy, inaccurate recommendations, scope creep, and unclear commerce integration.
+**Extraction quality is the product risk.** If the vision model reads garments poorly,
+every downstream outfit is wrong and the correction UI carries the whole experience.
+
+**Cold start is the adoption risk.** With no demo wardrobe, a first-time user must upload
+before seeing any value. This is a deliberate choice (`docs/DECISIONS.md`); it makes the
+first 60 seconds the highest-stakes part of the product.
+
+Also: analysis latency, privacy of closet imagery, and scope creep.
 
 ## 12. Product principles
 
 1. Show, don't describe.
-2. One great remix is better than ten weak recommendations.
-3. Ground every recommendation in real catalogue objects.
-4. Make latency feel intentional.
-5. Preserve user control.
-6. Design mobile interactions first.
+2. One great swap beats ten weak recommendations.
+3. Ground every outfit in items the user owns. No exceptions, no curated fallback.
+4. A guess must look like a guess.
+5. Correcting the AI is a first-class interaction.
+6. Make latency feel intentional.
+7. Design mobile-first — the photos are on the phone.

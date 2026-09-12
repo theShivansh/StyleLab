@@ -31,7 +31,7 @@ All strict schemas should:
 
 Use the configured vision model for:
 - broad image understanding
-- style/garment visual cues
+- garment extraction into structured metadata, with per-field confidence
 - photo quality feedback
 
 Do not infer unnecessary sensitive attributes.
@@ -51,7 +51,7 @@ Create:
 - MockGroqProvider
 - successful fixture
 - malformed output fixture
-- unknown SKU fixture
+- unowned-item fixture, and a cross-user item fixture
 - prompt injection fixture
 - timeout fixture
 
@@ -61,4 +61,4 @@ CI must not require GROQ_API_KEY.
 
 The production adapter talks to Groq.
 The domain layer cannot tell whether it is using Groq or the mock adapter.
-Invalid AI results never reach the commerce-facing UI.
+Invalid AI results never reach the UI, and no item another user owns is ever reachable.
