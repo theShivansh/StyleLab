@@ -12,7 +12,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S2 | Design system + landing | 02 | done | (this commit) | L T U E B A | Landing coherent 390/768/1440. Contrast 0 fails/86 nodes. Reveal rewritten for robustness. |
 | S2b | Reference → UI | 09 | skip? | — | — | only if refs provided |
 | S3 | Onboarding + composer | 03 | done-with-debt | (this commit) | L T U E B | Upload/analysis/correction built + proven via e2e stubs. "Completes against live Groq" deferred to S6 — endpoints do not exist yet. |
-| S4 | Wardrobe domain | 04 | todo | — | — | |
+| S4 | Wardrobe domain | 04 | done | (this commit) | L T U AI | Cross-user isolation red→green, then verified by 3 mutations (12 / 4 / 1 tests red). 109 api + 4 ai-eval tests. |
 | S5 | Groq adapter | 12 | todo | — | — | |
 | S6 | Upload + analysis pipeline | 05 | todo | — | — | |
 | S7 | Result + swap | 06 | todo | — | — | |
@@ -55,6 +55,12 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
       in it before the next `git add -A`. See docs/PLAN.md section 5.
 - [ ] B8 — Trend corpus (data/trends/) not yet assembled. Each entry needs source +
       published_at. Without it the Trend Scout is skipped (degradation level 2).
+- [ ] B11 — CI job `ai-eval` step 2 runs `pytest tests/ai/test_ablation.py`, which does not
+      exist until S8b. Step 1 is green as of S4. Deliberately not stubbed: an ablation test
+      that cannot fail is worthless (Case 21). The job stays red until S8b lands.
+- [ ] B12 — No migrations. `Base.metadata.create_all` covers tests and local work only;
+      Alembic (or Supabase migrations) lands with deployment in S11. Until then the schema
+      only exists where someone has run create_all.
 
 ## Decisions taken mid-build
 

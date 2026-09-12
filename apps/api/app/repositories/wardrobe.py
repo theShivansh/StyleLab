@@ -1,0 +1,437 @@
+"""Ownership-scoped persistence.
+
+prompts/04: "every query filters on `user_id`; there is no unscoped read path, not even for
+admin or debug". That is a rule about every future method as much as the ones written here,
+so it is enforced by construction rather than by discipline:
+
+* **`_scoped_select` is the only place a `select()` is built.** Every read in this module
+  goes through it, including the reads that back a write. Adding a method that forgets the
+  filter is not a subtle bug to be caught in review — there is nowhere to put it.
+* **`_scoped_extractions` is the one exception, and it is the same rule.**
+  `item_extractions` carries no `user_id` of its own (docs/DATA-MODEL.md), so it joins
+  through `wardrobe_items` and filters there.
+* **No `Session.get()` on an owned row.** Primary-key loads bypass the filter entirely;
+  that is the obvious way around a scoped select, so `tests/test_query_scoping.py` forbids
+  it explicitly.
+
+The repository returns frozen domain objects, never live ORM rows. A caller that cannot
+reach a row cannot mutate one by accident, and the domain stays free of SQLAlchemy.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, TypeVar
+
+from sqlalchemy import Select, select
+from sqlalchemy.orm import Session
+
+from app.db.models import (
+    ItemExtractionRow,
+    OutfitItemRow,
+    OutfitRow,
+    UserRow,
+    WardrobeItemRow,
+)
+from app.domain.compatibility import ROLE_ORDER
+from app.domain.corrections import apply_correction, merge_extraction
+from app.domain.models import (
+    Formality,
+    GarmentCategory,
+    GarmentExtraction,
+    ItemStatus,
+    WardrobeItem,
+)
+
+_Owned = TypeVar("_Owned", WardrobeItemRow, OutfitRow, OutfitItemRow)
+
+
+def _scoped_select(user_id: str, row: type[_Owned]) -> Select[tuple[_Owned]]:
+    """The only select in this module. Filters on `user_id`, always.
+
+    Generic over the row type so there is one builder rather than one per table — a second
+    builder is a second place to forget the filter.
+    """
+    return select(row).where(row.user_id == user_id)
+
+
+def _scoped_extractions(user_id: str, wardrobe_item_id: str) -> Select[tuple[ItemExtractionRow]]:
+    """Audit rows for one item, scoped by joining through the item that owns them."""
+    return (
+        select(ItemExtractionRow)
+        .join(WardrobeItemRow, WardrobeItemRow.id == ItemExtractionRow.wardrobe_item_id)
+        .where(
+            WardrobeItemRow.user_id == user_id,
+            ItemExtractionRow.wardrobe_item_id == wardrobe_item_id,
+        )
+        .order_by(ItemExtractionRow.id)
+    )
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _to_domain(row: WardrobeItemRow) -> WardrobeItem:
+    """Row to frozen domain object. The domain speaks garments, not tables."""
+    return WardrobeItem(
+        item_id=row.id,
+        user_id=row.user_id,
+        status=ItemStatus(row.status),
+        corrected_fields=list(row.corrected_fields or []),
+        extraction=GarmentExtraction(
+            category=GarmentCategory(row.category) if row.category else None,
+            subcategory=row.subcategory,
+            color_primary=row.color_primary,
+            color_secondary=row.color_secondary,
+            pattern=row.pattern,
+            material_guess=row.material_guess,
+            fit=row.fit,
+            formality=Formality(row.formality) if row.formality else None,
+            season_tags=list(row.season_tags or []),
+            occasion_tags=list(row.occasion_tags or []),
+            style_tags=list(row.style_tags or []),
+            field_confidence=dict(row.field_confidence or {}),
+            quality_warnings=list(row.quality_warnings or []),
+        ),
+    )
+
+
+def _write_extraction(row: WardrobeItemRow, item: WardrobeItem) -> None:
+    """Copy a domain item's extraction onto its row."""
+    extraction = item.extraction
+    row.status = item.status.value
+    row.corrected_fields = list(item.corrected_fields)
+    row.category = extraction.category.value if extraction.category else None
+    row.subcategory = extraction.subcategory
+    row.color_primary = extraction.color_primary
+    row.color_secondary = extraction.color_secondary
+    row.pattern = extraction.pattern
+    row.material_guess = extraction.material_guess
+    row.fit = extraction.fit
+    row.formality = extraction.formality.value if extraction.formality else None
+    row.season_tags = list(extraction.season_tags)
+    row.occasion_tags = list(extraction.occasion_tags)
+    row.style_tags = list(extraction.style_tags)
+    row.field_confidence = dict(extraction.field_confidence)
+    row.quality_warnings = list(extraction.quality_warnings)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredOutfit:
+    outfit_id: str
+    user_id: str
+    name: str
+    occasion: str
+    match_score: int
+    rationale: list[str]
+    status: str
+    degradation_level: int
+    item_ids: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredExtraction:
+    provider: str
+    model: str
+    raw_output: object
+    schema_valid: bool
+    rejected_reason: str | None
+    latency_ms: int
+
+
+class WardrobeRepository:
+    """Reads and writes a single user's wardrobe. Every method names the owner."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    # --- users -------------------------------------------------------------------------
+
+    def add_user(self, user_id: str, email: str) -> None:
+        """Present so tests and the upload path can establish an owner. Real account
+        creation is an auth concern and lands with deployment."""
+        self._session.add(UserRow(id=user_id, email=email))
+        self._session.flush()
+
+    # --- items -------------------------------------------------------------------------
+
+    def add_item(self, item: WardrobeItem, *, asset_id: str | None = None) -> None:
+        """Insert a garment. The owner comes from the item, which carries it by type."""
+        row = WardrobeItemRow(id=item.item_id, user_id=item.user_id, asset_id=asset_id)
+        _write_extraction(row, item)
+        self._session.add(row)
+        self._session.flush()
+
+    def get(self, user_id: str, item_id: str) -> WardrobeItem | None:
+        row = self._row(user_id, item_id)
+        return _to_domain(row) if row else None
+
+    def candidates(
+        self,
+        user_id: str,
+        *,
+        roles: Sequence[GarmentCategory] | None = None,
+        statuses: Sequence[ItemStatus] = (ItemStatus.READY,),
+        limit: int | None = None,
+    ) -> list[WardrobeItem]:
+        """The candidate set handed to the advisor.
+
+        Scoped, status-filtered and soft-delete-aware in SQL, before any prompt exists. This
+        is step 2 of docs/ARCHITECTURE.md section 6 and half of the grounding guarantee;
+        prompt wording is never what keeps another user's garment out of this list.
+
+        Ordered by id so the same wardrobe produces the same candidate set every time.
+        """
+        statement = _scoped_select(user_id, WardrobeItemRow).where(
+            WardrobeItemRow.deleted_at.is_(None),
+            WardrobeItemRow.status.in_([s.value for s in statuses]),
+        )
+        if roles is not None:
+            statement = statement.where(
+                WardrobeItemRow.category.in_([r.value for r in roles])
+            )
+        statement = statement.order_by(WardrobeItemRow.id)
+        if limit is not None:
+            statement = statement.limit(limit)
+
+        return [_to_domain(row) for row in self._session.execute(statement).scalars()]
+
+    def count_by_role(self, user_id: str) -> dict[GarmentCategory, int]:
+        """Ready items per role, for gap messaging. Roles with none are reported as 0 rather
+        than omitted — the absence is the interesting part."""
+        counts = dict.fromkeys(ROLE_ORDER, 0)
+        for item in self.candidates(user_id):
+            role = item.extraction.category
+            if role is not None:
+                counts[role] = counts.get(role, 0) + 1
+        return counts
+
+    def save_correction(self, user_id: str, item_id: str, field: str, value: object) -> bool:
+        """Apply a user correction. Returns False when the item is not this user's.
+
+        The domain decides what a correction means — the field is recorded and its
+        confidence score dropped (`app.domain.corrections`). This method only persists it.
+        """
+        row = self._row(user_id, item_id)
+        if row is None:
+            return False
+
+        corrected = apply_correction(_to_domain(row), field, value)
+        _write_extraction(row, corrected)
+        self._session.flush()
+        return True
+
+    def save_extraction(
+        self,
+        user_id: str,
+        item_id: str,
+        extraction: GarmentExtraction,
+        *,
+        analyzed_by: str | None = None,
+    ) -> bool:
+        """Store a fresh reading, preserving every field the user corrected (Case 13).
+
+        The merge rule lives in the domain; applying it here is what stops a re-analysis job
+        from writing the model's answer straight over the user's.
+        """
+        row = self._row(user_id, item_id)
+        if row is None:
+            return False
+
+        merged = merge_extraction(_to_domain(row), extraction)
+        _write_extraction(row, merged)
+        row.analyzed_by = analyzed_by
+        row.analyzed_at = _now()
+        self._session.flush()
+        return True
+
+    def set_status(self, user_id: str, item_id: str, status: ItemStatus) -> bool:
+        row = self._row(user_id, item_id)
+        if row is None:
+            return False
+        row.status = status.value
+        self._session.flush()
+        return True
+
+    def soft_delete_item(self, user_id: str, item_id: str) -> bool:
+        """Mark an item deleted. Returns False when it is not this user's.
+
+        Soft, because docs/DATA-MODEL.md needs deletion observable and reversible by
+        support. Scoped, because a delete is a read plus an update and the read is the part
+        that leaks.
+        """
+        row = self._row(user_id, item_id)
+        if row is None:
+            return False
+        row.deleted_at = _now()
+        self._session.flush()
+        return True
+
+    # --- outfits -----------------------------------------------------------------------
+
+    def save_outfit(
+        self,
+        user_id: str,
+        *,
+        outfit_id: str,
+        name: str,
+        occasion: str,
+        item_ids: Sequence[str],
+        match_score: int = 0,
+        rationale: Sequence[str] = (),
+        degradation_level: int = 1,
+    ) -> StoredOutfit:
+        """Persist a composed outfit.
+
+        Ownership is checked here *and* enforced by the composite foreign keys in
+        `app.db.models`. Two independent defences on purpose: this is the one rule the
+        product rests on, and a check in application code is only as good as the next
+        person's memory.
+        """
+        owned = {item.item_id for item in self.candidates(user_id)}
+        foreign = [item_id for item_id in item_ids if item_id not in owned]
+        if foreign:
+            raise ValueError(f"not owned by {user_id}: {', '.join(sorted(foreign))}")
+
+        self._session.add(
+            OutfitRow(
+                id=outfit_id,
+                user_id=user_id,
+                name=name,
+                occasion=occasion,
+                match_score=match_score,
+                rationale=list(rationale),
+                degradation_level=degradation_level,
+            )
+        )
+        by_id = {item.item_id: item for item in self.candidates(user_id)}
+        for rank, item_id in enumerate(item_ids):
+            role = by_id[item_id].extraction.category
+            self._session.add(
+                OutfitItemRow(
+                    outfit_id=outfit_id,
+                    wardrobe_item_id=item_id,
+                    user_id=user_id,
+                    role=role.value if role else "",
+                    rank=rank,
+                )
+            )
+        self._session.flush()
+
+        stored = self.get_outfit(user_id, outfit_id)
+        assert stored is not None  # just written, in this session
+        return stored
+
+    def get_outfit(self, user_id: str, outfit_id: str) -> StoredOutfit | None:
+        row = self._session.execute(
+            _scoped_select(user_id, OutfitRow).where(OutfitRow.id == outfit_id)
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+
+        joins = self._session.execute(
+            _scoped_select(user_id, OutfitItemRow)
+            .where(OutfitItemRow.outfit_id == outfit_id)
+            .order_by(OutfitItemRow.rank)
+        ).scalars()
+
+        return StoredOutfit(
+            outfit_id=row.id,
+            user_id=row.user_id,
+            name=row.name,
+            occasion=row.occasion,
+            match_score=row.match_score,
+            rationale=list(row.rationale or []),
+            status=row.status,
+            degradation_level=row.degradation_level,
+            item_ids=[join.wardrobe_item_id for join in joins],
+        )
+
+    # --- internals ---------------------------------------------------------------------
+
+    def _row(self, user_id: str, item_id: str) -> WardrobeItemRow | None:
+        """The scoped single-row load.
+
+        Deliberately not `Session.get(WardrobeItemRow, item_id)`: a primary-key load skips
+        the filter and would hand back any user's garment.
+        """
+        return self._session.execute(
+            _scoped_select(user_id, WardrobeItemRow).where(WardrobeItemRow.id == item_id)
+        ).scalar_one_or_none()
+
+
+class ExtractionAuditRepository:
+    """The append-only evidence trail behind every wardrobe field.
+
+    Rows are written for accepted *and* rejected attempts. An audit trail that only keeps
+    the successes cannot show that anything was ever caught, which is the entire point of
+    keeping one (docs/DATA-MODEL.md).
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def record(
+        self,
+        user_id: str,
+        wardrobe_item_id: str,
+        *,
+        provider: str,
+        model: str,
+        raw_output: Any,
+        schema_valid: bool,
+        latency_ms: int,
+        rejected_reason: str | None = None,
+    ) -> None:
+        """Append one attempt.
+
+        `raw_output` is stored as returned, before validation — a normalised copy is not
+        evidence of what the provider actually said. It is never rendered to a user and
+        never logged; it lives here so an extraction can be replayed.
+        """
+        owner_check = self._session.execute(
+            _scoped_select(user_id, WardrobeItemRow).where(
+                WardrobeItemRow.id == wardrobe_item_id
+            )
+        ).scalar_one_or_none()
+        if owner_check is None:
+            raise ValueError(f"not owned by {user_id}: {wardrobe_item_id}")
+
+        self._session.add(
+            ItemExtractionRow(
+                wardrobe_item_id=wardrobe_item_id,
+                provider=provider,
+                model=model,
+                raw_output=raw_output,
+                schema_valid=schema_valid,
+                rejected_reason=rejected_reason,
+                latency_ms=latency_ms,
+            )
+        )
+        self._session.flush()
+
+    def for_item(self, user_id: str, wardrobe_item_id: str) -> list[StoredExtraction]:
+        """Attempts for one item, oldest first. Empty when the item is not this user's."""
+        rows = self._session.execute(_scoped_extractions(user_id, wardrobe_item_id)).scalars()
+        return [
+            StoredExtraction(
+                provider=row.provider,
+                model=row.model,
+                raw_output=row.raw_output,
+                schema_valid=row.schema_valid,
+                rejected_reason=row.rejected_reason,
+                latency_ms=row.latency_ms,
+            )
+            for row in rows
+        ]
+
+
+__all__ = [
+    "ExtractionAuditRepository",
+    "StoredExtraction",
+    "StoredOutfit",
+    "WardrobeRepository",
+]

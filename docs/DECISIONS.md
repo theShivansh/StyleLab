@@ -495,3 +495,238 @@ to miss.
 General lesson, third instance this build: an effect whose dependency it also mutates will
 re-run mid-flight. Anything long-lived started inside it must not be torn down by its own
 cleanup.
+
+---
+
+### 2026-09-12 — Ownership is enforced by construction, not by discipline
+
+Context:
+prompts/04 requires that "every query filters on `user_id`; there is no unscoped read path,
+not even for admin or debug". Written as a convention, that rule holds exactly as long as
+everybody who adds a repository method remembers it.
+
+Decision:
+`app/repositories/wardrobe.py` builds **every** `select()` inside a `_scoped*` helper that
+takes `user_id` and applies it. `tests/test_query_scoping.py` parses the package with `ast`
+and fails if a `select()` appears anywhere else, if a `_scoped*` helper has a `where()` that
+never mentions `user_id`, or if an owned row is loaded by primary key via `Session.get()`.
+
+Alternatives:
+Per-method tests asserting each read is scoped. Rejected: they pass today and say nothing
+about the method added next month, which is when this actually breaks.
+
+Why:
+An unscoped read now has nowhere to live. `Session.get()` is called out separately because
+it is the one bypass that looks like ordinary SQLAlchemy — it loads by primary key and
+ignores the filter entirely.
+
+Verified by mutation, not by assertion: deleting `.where(row.user_id == user_id)` from the
+one builder turned **12 tests red** across four files. Reverted; suite back to 109 green.
+
+---
+
+### 2026-09-12 — Ownership re-validation issues no query
+
+Context:
+`docs/AI-SYSTEM.md` says an item id outside the retrieved set is "rejected, not fetched".
+The tempting implementation asks the database whether the id exists for this user, so the
+log can say whether it was a cross-user attempt.
+
+Decision:
+`validate_advice` compares only against `request.candidates`, in memory. No lookup, scoped
+or otherwise. `UngroundedItemError` therefore carries the ids and the requesting user, and
+**cannot** say who owns them.
+
+Why:
+Even a scoped existence check puts another user's id into a query. Keeping validation
+query-free means the isolation property is assertable against the statements the engine
+actually executed — `test_the_other_users_item_is_never_asked_for` reads the engine's
+statement log and proves the id never appeared in one, which is stronger than proving it
+was not returned. A filter applied in Python after an unscoped SELECT would pass the weaker
+test and fail this one.
+
+Consequence accepted: attributing a rejected id is the alerting layer's job, which has
+legitimate admin scope outside the request path. The rejection itself is identical either
+way, so nothing user-facing depends on the attribution.
+
+Second mutation: replacing the ownership check with `ungrounded = []` turned 4 tests red,
+including the forged-response case. Reverted.
+
+---
+
+### 2026-09-12 — Cross-user leakage is unrepresentable in the schema
+
+Context:
+`docs/DATA-MODEL.md` asks for composite foreign keys so that a cross-user `outfit_items`
+row cannot be represented rather than merely being untested.
+
+Decision:
+`wardrobe_items` and `outfits` each carry `UNIQUE (id, user_id)` — redundant alone, since
+`id` is already unique. `outfit_items` carries its own `user_id` and points at both parents
+with composite foreign keys, so the database refuses a row whose outfit and garment belong
+to different users. `app/db/session.py` sets `PRAGMA foreign_keys = ON` for SQLite, which
+is off by default and would otherwise make every constraint here decoration.
+
+Why:
+Two independent defences on the one rule the product rests on: the repository checks
+ownership before writing, and the schema refuses regardless. A bug in the layer above
+becomes a failed insert instead of a leak.
+
+Third mutation: weakening the `outfit_items` item foreign key to a single column turned the
+constraint test red. Reverted.
+
+---
+
+### 2026-09-12 — DeterministicRanker deliberately does not implement OutfitAdvisor
+
+Context:
+The ranker is rung 4 of the fallback ladder. It takes the same input as an advisor and
+returns the same type, so making it satisfy the `OutfitAdvisor` Protocol would be natural.
+
+Decision:
+It exposes `compose()`, not `advise()`, so `isinstance(DeterministicRanker(), OutfitAdvisor)`
+is **False** and it cannot be injected where the real advisor goes. A test asserts this.
+
+Why:
+A fallback that is structurally substitutable for the product is one config line away from
+becoming the product — which is demo mode returning through the back door (Case 25). Its
+output also always carries `degradation_level` 4 or 5 and says so in the rationale: a
+degraded answer that looks identical to a full one is the gimmick this project exists to
+avoid.
+
+---
+
+### 2026-09-12 — The advisor writes the words; the system computes the number
+
+Context:
+An advisor returns a `match_score` alongside its rationale.
+
+Decision:
+`CompositionService._rescore` discards it and recomputes the score from the items via
+`app/domain/scoring.py`. The name and rationale are kept as the advisor wrote them.
+
+Why:
+Two identical wardrobes must not show different Style Match figures because a model felt
+differently on the day. Judgement is what the advisor is for; arithmetic is not. Style Match
+remains a UX heuristic either way — `docs/PRD.md` — and `scoring.py` says so in its own
+docstring rather than implying colour science.
+
+---
+
+### 2026-09-12 — Structured-output schemas are derived from the Pydantic models
+
+Context:
+Groq Structured Outputs needs a JSON Schema with `additionalProperties: false` and explicit
+enums. The obvious approach is to write one next to the model.
+
+Decision:
+`app/domain/schemas.py` generates both schemas from `GarmentExtraction` and `OutfitAdvice`,
+inlines `$defs`, and closes every nested object. Tests assert the property set matches the
+model field set exactly.
+
+Why:
+Two hand-maintained copies of one contract drift, and the drift is silent — the symptom is
+a field the provider is allowed to omit that the domain requires. Closing objects at every
+depth rather than only the root matters because a nested object left open is precisely
+where an unexpected field arrives.
+
+Parsing lives in the domain rather than the Groq adapter so it is testable with no key, and
+so the S8b agent crew validates against the same contract as the vision path.
+
+---
+
+### 2026-09-12 — Schema failure reasons name the field, never the value
+
+Context:
+A validation failure needs a reason that is useful in a log.
+
+Decision:
+`SchemaInvalidError.reason` names the field path and the rule it broke. It never echoes the
+offending value, and a JSON parse failure reports line and column only.
+
+Why:
+Provider output is untrusted content, and text recovered from a photograph — a slogan, a
+care label, a price tag — reaches us through exactly this path (Case 07). Echoing it into a
+log is how injected text gets read by a human later. `docs/SECURITY-PRIVACY.md` already
+forbids surfacing a raw provider message; this is the same rule applied to the log.
+
+---
+
+### 2026-09-12 — An unowned id in an outfit is fatal; in a trend note it is dropped
+
+Context:
+Both are references to an item outside the candidate set, so uniform treatment looks
+tidier.
+
+Decision:
+An outfit slot naming an unowned id raises and the response is discarded. A trend note
+whose `applies_to_items` names one is filtered out and the rest of the response is served.
+
+Why:
+The asymmetry tracks the harm. An outfit slot would put that garment on the user; a note is
+context and cannot. Dropping rather than serving the note still matters, because a note
+about an item the user does not own implies they do (Case 16). Hard-failing an entire
+response over a discardable annotation would degrade answers for no safety gain.
+
+---
+
+### 2026-09-12 — No advisor call when a required role is empty
+
+Context:
+With three tops and no bottoms, the crew could still be asked and its answer rejected.
+
+Decision:
+`CompositionService.compose` checks `missing_roles` before building a request and returns
+the gap statement directly. The advisor is never called; a test asserts `advisor.calls`
+is empty.
+
+Why:
+Paying for a crew run to be told what a count already told us is waste. More importantly,
+asking a model to style around a missing role is an invitation to fill it — the exact
+failure Case 12 exists to prevent. Not asking is a stronger defence than rejecting.
+
+---
+
+### 2026-09-12 — tests/ai gets real content now, not in S8
+
+Context:
+The CI `ai-eval` job runs `pytest tests/ai -q`, and that directory held only a README. The
+job has been red since S1.
+
+Decision:
+S4 lands `tests/ai/stubs.py` (the stub adapters prompts/04 asks for) and
+`tests/ai/test_grounding.py` covering Cases 01, 11 and 12 — the cases the domain layer can
+already answer in full. Its `conftest.py` puts `apps/api` on `sys.path` and deliberately
+does **not** set `GROQ_API_KEY`; the suite is verified to pass with the variable unset.
+
+Why:
+The stubs needed a consumer in the directory they live in, otherwise `apps/api/tests` was
+reaching across the repository by file path to use a module nothing local touched. And a
+permanently-red CI job trains people to ignore CI.
+
+Still red and honestly so: the second step of that job runs
+`pytest tests/ai/test_ablation.py`, which is an S8b deliverable. Writing a placeholder
+ablation test would be worse than leaving the step failing — the whole point of Case 21 is
+that it must be able to fail.
+
+---
+
+### 2026-09-12 — Exception names carry the Error suffix
+
+Context:
+`SchemaInvalid`, `UngroundedItem` and `IncompatibleOutfit` read better without a suffix, but
+ruff N818 is selected in `apps/api/pyproject.toml` and flagged all three.
+
+Decision:
+Renamed to `SchemaInvalidError`, `UngroundedItemError`, `IncompatibleOutfitError` rather
+than adding `noqa`.
+
+Why:
+`DomainError` and `ConfigurationError` already follow the rule, so the family was
+inconsistent either way. Suppressing a lint rule selected on purpose, to keep three names
+slightly prettier, is how a ruleset stops meaning anything.
+
+Noted for the record: `ruff format` is **not** part of the gate — CI runs `ruff check` only,
+and `app/config.py` from S1 has never been format-clean. Reformatting was not adopted in S4
+because it would reflow the deliberately column-aligned lookup tables in `scoring.py` into
+sixty single-entry lines, which is worse to read for no correctness gain.

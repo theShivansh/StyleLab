@@ -102,6 +102,9 @@ class AdviceRequest(Strict):
     candidates: list[WardrobeItem]
     occasion: str
     vibe: str | None = None
+    #: What the user asked for, not a measurement of them. Style Match is a UX heuristic.
+    fit_preference: str | None = None
+    color_preferences: list[str] = Field(default_factory=list)
     required_roles: list[GarmentCategory] = Field(default_factory=list)
     trend_notes: list[TrendNote] = Field(default_factory=list)
 

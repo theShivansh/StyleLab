@@ -58,7 +58,8 @@ Replaces the old `garments` table. A garment the user owns, not a product for sa
 - extraction_confidence   *(overall, 0–1)*
 - field_confidence        *(per-field map — drives which fields prompt for confirmation)*
 - corrected_fields        *(fields the user overrode; re-analysis must never overwrite these)*
-- analyzed_by             *(model id, or `deterministic-demo`)*
+- analyzed_by             *(model id; null before the first analysis. There is no
+                          deterministic extraction path — see docs/DECISIONS.md)*
 - analyzed_at
 - created_at
 - deleted_at
