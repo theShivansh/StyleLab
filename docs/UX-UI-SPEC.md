@@ -143,18 +143,30 @@ Do not animate everything.
 
 ## Library strategy
 
-Skiper UI, Vengeance UI and “Animaster” are all **unverified** until Claude inspects the
-actual source. Use any of them only after identifying the exact package/repository,
-confirming it is installable and currently maintained, and recording the finding in
-`docs/DECISIONS.md`. If one turns out to be a copy-paste registry rather than an
-installable package, record that and vendor the component instead of importing it.
-Never write an import for a library whose source has not been inspected.
+Verified 2026-09-12 — see `docs/DECISIONS.md` for evidence. Both approved libraries are
+**shadcn source-drop registries, not npm packages**: `shadcn add` writes a `.tsx` file
+into this repo and there is no runtime dependency afterwards. Read every file before
+committing it, and record the upstream name + commit SHA in a header comment.
 
-Subject to that gate:
+**Vengeance UI** — primary. Animated CTA, image interaction, text, loader, showcase.
+MIT, public repo (`github.com/Ashutoshx7/VengeanceUI`), registry served from that repo.
+Pin by commit SHA, never `main`. Do not link the vendor site from our README or demo
+script — its docs pages carry crypto-token promotion.
 
-Use Skiper UI for selected cards, carousels, hero/showcase interactions where it genuinely improves UX.
+**Skiper UI** — secondary. Cards, carousels, hero/showcase, where it is clearly better
+than the Vengeance UI equivalent. Free components only. It has **no public source
+repository**, so vendor the file and own it from that moment. Attribution to Skiper UI
+is required by its free licence — put it in the app colophon. Never add the paid tier:
+a licence key validated on every install is not acceptable in a portfolio build.
 
-Use Vengeance UI for selected animated CTA, image interaction, text, loader, or showcase patterns.
+**"Animaster"** — rejected. No package, no repository, no docs; promo content only.
+Do not import it, and do not substitute `animista.net` for it — that emits CSS
+keyframes, not React components.
+
+Any library not named above is unverified. Identify the exact package/repository,
+confirm it is installable and maintained, and record the finding in `docs/DECISIONS.md`
+before writing the import. Never write an import for a library whose source has not
+been inspected.
 
 Wrap vendor components with local design-system components so the app remains replaceable.
 

@@ -32,7 +32,9 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
 
 - [ ] B1 — seed catalogue (~60 garments) + CC0 imagery not sourced
 - [ ] B2 — pre-generated VTO result assets not produced
-- [ ] B3 — Skiper UI / Vengeance UI install source unverified
+- [x] B3 — UI libraries verified 2026-09-12. Vengeance UI approved (MIT, pin by SHA);
+      Skiper UI free tier only, attribution required, no public repo so vendor it;
+      "Animaster" rejected — does not exist. Evidence in docs/DECISIONS.md.
 - [ ] B4 — VTO production provider unchosen (mock is the ship target)
 
 ## Decisions taken mid-build
