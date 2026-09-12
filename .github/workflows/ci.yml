@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.11" }
       - run: pip install -e "apps/api[dev]"
       - run: ruff check apps/api
       - run: pytest apps/api/tests -q
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.11" }
       - run: pip install -e "apps/api[dev]"
       - name: Grounding regression (stub adapters, no API key)
         run: pytest tests/ai -q
@@ -78,7 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with: { python-version: "3.11" }
       - run: pip install -e "apps/api[dev]"
       - name: Model availability check
         run: pytest tests/live/test_model_availability.py -q

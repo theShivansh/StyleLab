@@ -1,0 +1,33 @@
+{
+  "name": "stylelab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI wardrobe stylist \u2014 reads photos of clothes you own and styles outfits from them.",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --filter web lint",
+    "typecheck": "pnpm --filter web typecheck",
+    "test:unit": "pnpm --filter web test:unit",
+    "test:e2e": "pnpm --filter web test:e2e",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:unit && pnpm build",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,md,json,yml,yaml,css}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "unrs-resolver",
+      "@tailwindcss/oxide",
+      "sharp"
+    ]
+  }
+}

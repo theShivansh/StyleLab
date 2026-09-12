@@ -10,6 +10,33 @@ wardrobe, and styles outfits from it. It sells nothing and links to no merchant.
 > performs real inference and fails loudly at boot without a key. Copy `.env.example`
 > to `.env` and set `GROQ_API_KEY` before running anything.
 
+## Running it
+
+```bash
+pnpm install
+cp .env.example .env          # then set GROQ_API_KEY
+pnpm dev                      # web on :3000
+```
+
+The API runs from its own virtualenv:
+
+```bash
+python -m venv .venv
+./.venv/Scripts/python -m pip install -e "apps/api[dev]"     # POSIX: .venv/bin/python
+./.venv/Scripts/python -m uvicorn app.main:app --reload --app-dir apps/api
+```
+
+Checks — the same set CI runs:
+
+```bash
+pnpm check                    # lint + typecheck + unit + build
+pnpm --filter web test:e2e    # needs: pnpm exec playwright install chromium
+./.venv/Scripts/python -m ruff check apps/api
+./.venv/Scripts/python -m pytest apps/api/tests -q
+```
+
+Python is pinned to **3.11** in both CI and local (`docs/DECISIONS.md`).
+
 ### Core loop
 
 Upload → Extract → Review/correct → Compose → Swap → Save

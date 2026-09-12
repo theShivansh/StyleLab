@@ -8,7 +8,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S | Phase | Prompt | State | Commit | Gates passed | Notes / carry-over |
 |---|-------|--------|-------|--------|--------------|--------------------|
 | S0 | Recon + plan | 00 | done | (this commit) | n/a — no code | docs/PLAN.md written. Prompt 00 patched: 5 instructions superseded. No implementation, by design. |
-| S1 | Foundation | 01 | todo | — | — | |
+| S1 | Foundation | 01 | done | (this commit) | L T U E B | pnpm workspace, Next 16 web, FastAPI api. Gate verified blocking. Python reversed to 3.11. |
 | S2 | Design system + landing | 02 | todo | — | — | |
 | S2b | Reference → UI | 09 | skip? | — | — | only if refs provided |
 | S3 | Onboarding + composer | 03 | todo | — | — | |
@@ -47,7 +47,8 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
 - [ ] B7 — GROQ_API_KEY is now required to run anything. Provision it, add it to repo
       secrets for the live-smoke CI job, and rehearse against the live path.
       Not blocking S1-S4 (interfaces and stubs only); blocking from S5.
-- [ ] B9 — Python 3.11.9 local vs 3.12 in CI. Pin to 3.12 in S1 before any API work.
+- [x] B9 — RESOLVED in S1. Pinned to 3.11 in CI and locally; 3.12 was never installed and
+      installing it is a system change. See docs/DECISIONS.md.
 - [ ] B10 — .env.example has an uninspectable uncommitted change (deny rule Read(./.env.*)
       matches it). It is TRACKED and not gitignored. Verify by hand that no real key is
       in it before the next `git add -A`. See docs/PLAN.md section 5.

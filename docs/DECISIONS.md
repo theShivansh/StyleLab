@@ -359,3 +359,29 @@ rule `Read(./.env.*)` in `.claude/settings.json` matches `.env.example` as well 
 The deny was respected rather than circumvented. Because `.env.example` is tracked and not
 gitignored, a key pasted there would be committed. Verify by hand. If the rule proves too
 broad in daily use, narrow it to `Read(./.env)` and `Read(./.env.local)` — do not remove it.
+
+---
+
+### 2026-09-12 — Python pinned to 3.11, reversing the S0 assumption
+
+Context:
+S0 assumed the fix for the local-vs-CI drift was to install Python 3.12 locally and match
+CI. S1 checked what is actually installed: only Python 3.11 (Microsoft Store build).
+3.12 is absent.
+
+Decision:
+**Pin Python 3.11 everywhere.** CI dropped from 3.12 to 3.11 to match the development
+machine.
+
+Why the reversal:
+Installing 3.12 is a system-level change to the user's machine, not a repo change, and it
+is not mine to make unilaterally. More to the point, nothing in this project needs 3.12 —
+FastAPI, Pydantic v2 and SQLAlchemy 2.x all fully support 3.11, which has security support
+into late 2027. The drift was the problem, not the version number; matching the real
+environment removes it at zero cost.
+
+Trade-offs:
+The deployment target must also run 3.11. Record it in the container/runtime config when
+S11 sets deployment up, or the drift returns at the last possible moment.
+
+Supersedes: assumption 3 in the S0 entry above, and `docs/PLAN.md` §5.3.

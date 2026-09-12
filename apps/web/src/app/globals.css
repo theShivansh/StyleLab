@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   STYLELAB design tokens.
+   Source of truth: docs/UX-UI-SPEC.md and docs/MOTION-SYSTEM.md.
+   Visual target: editorial fashion x AI laboratory x personal archive.
+   Add tokens here; never hardcode a hex or a duration in a component.
+--------------------------------------------------------------------------- */
+
+@theme {
+  /* Surfaces — warm neutral, not grey */
+  --color-ivory: #faf9f7;
+  --color-ivory-sunk: #f2f0ec;
+  --color-ivory-raised: #ffffff;
+
+  /* Ink */
+  --color-ink: #111111;
+  --color-ink-muted: #5a5751;
+  --color-ink-faint: #8e8a83;
+
+  /* Accent — controlled, never decorative */
+  --color-accent: #ff3f7f;
+  --color-accent-sunk: #e02c69;
+  --color-accent-wash: #ffe9f0;
+
+  /* Semantic */
+  --color-line: #e4e1db;
+  --color-danger: #b42318;
+  --color-warning: #b54708;
+  --color-success: #067647;
+
+  /* Confidence — the UI must make a guess look like a guess */
+  --color-confident: #067647;
+  --color-hedged: #b54708;
+  --color-unknown: #8e8a83;
+
+  /* Radii — 20-28px cards per the spec */
+  --radius-card: 24px;
+  --radius-card-sm: 20px;
+  --radius-card-lg: 28px;
+  --radius-control: 12px;
+  --radius-pill: 999px;
+
+  /* Motion. Functional 100-180, spatial 250-500, hero 600-1200. */
+  --duration-functional: 140ms;
+  --duration-spatial: 320ms;
+  --duration-hero: 820ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* Type */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-ivory);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus is never removed, only restyled. QA-RELEASE gates on visible focus. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* CLAUDE.md motion rule: honour prefers-reduced-motion.
+   Motion is suppressed, not merely shortened — and never at the cost of a state change
+   the user needs to perceive. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Screen-reader-only, for the a11y utilities in src/lib/a11y.ts */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}

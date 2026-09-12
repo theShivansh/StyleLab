@@ -17,7 +17,7 @@ was written this session.
 | UI system | None. |
 | Git | 4 commits, clean except one uncommitted `.env.example` change (see §5) |
 | Node | v22.19.0 — ok |
-| Python | **3.11.9 local vs `python-version: "3.12"` in CI** — drift |
+| Python | 3.11.9 local; CI was 3.12 — **resolved in S1 by pinning both to 3.11** |
 
 The repository is a specification and harness, not a scaffold. Nothing is adapted; S1
 builds from zero. Working rule 2 ("adapt rather than restart") does not apply — there is
@@ -98,7 +98,8 @@ confident nonsense, so the harness that catches it must exist first.
 
 1. Build from zero; nothing to adapt.
 2. Repo layout exactly as `CLAUDE.md` specifies. No third app.
-3. Python pinned to CI's 3.12, not local 3.11.9 — to be confirmed in S1.
+3. ~~Python pinned to CI's 3.12~~ **REVERSED in S1: 3.11 everywhere.** 3.12 is not
+   installed locally and installing it is a system change; nothing here needs it.
 4. `tests/ai/` stays at the repo root.
 5. `DeterministicRanker` is a rung on the fallback ladder, never a product mode.
 6. **Unresolved:** `.env.example` has an uncommitted change this session could not inspect
