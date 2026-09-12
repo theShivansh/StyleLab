@@ -11,7 +11,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S1 | Foundation | 01 | done | (this commit) | L T U E B | pnpm workspace, Next 16 web, FastAPI api. Gate verified blocking. Python reversed to 3.11. |
 | S2 | Design system + landing | 02 | done | (this commit) | L T U E B A | Landing coherent 390/768/1440. Contrast 0 fails/86 nodes. Reveal rewritten for robustness. |
 | S2b | Reference → UI | 09 | skip? | — | — | only if refs provided |
-| S3 | Onboarding + composer | 03 | todo | — | — | |
+| S3 | Onboarding + composer | 03 | done-with-debt | (this commit) | L T U E B | Upload/analysis/correction built + proven via e2e stubs. "Completes against live Groq" deferred to S6 — endpoints do not exist yet. |
 | S4 | Wardrobe domain | 04 | todo | — | — | |
 | S5 | Groq adapter | 12 | todo | — | — | |
 | S6 | Upload + analysis pipeline | 05 | todo | — | — | |

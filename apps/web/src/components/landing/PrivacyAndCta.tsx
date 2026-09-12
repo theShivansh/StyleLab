@@ -72,13 +72,11 @@ export function PrivacyAndCta() {
               something that can style them.
             </p>
             <div className="mt-9 flex justify-center">
-              <ButtonLink href="#start" size="lg">
+              <ButtonLink href="/wardrobe" size="lg">
                 Start my wardrobe
               </ButtonLink>
             </div>
-            <p className="text-ink-muted/70 mt-5 text-xs">
-              Upload arrives in the next build phase.
-            </p>
+
           </Reveal>
         </div>
       </section>

@@ -446,3 +446,52 @@ Decisions:
    `:root`, so `--font-sans: var(--font-geist-sans), ...` was substituted in `:root`'s context
    where `--font-geist-sans` did not exist — the token computed to an empty string and every
    element silently fell back to the UA font stack. Geist was not applying anywhere.
+
+---
+
+### 2026-09-12 — S3: phase-ordering conflict in prompt 03, and how the flow was proven
+
+Context:
+`prompts/03-COMPOSER.md` acceptance says "upload → analysis → review → compose completes
+against live Groq". It cannot, in this phase: the Groq adapter is S5 and the wardrobe
+endpoints are S6. The prompt order is still right — the UI should be built against the
+contract before the server implements it — but that one criterion is unmeetable at S3.
+
+Decision:
+1. **That acceptance criterion is deferred to S6**, explicitly, rather than fudged. Every
+   other S3 criterion is met and verified.
+2. **No client-side analyzer was written.** It would have made the flow demonstrable today
+   and it is exactly what `AI-EVAL-CASES` Case 25 exists to prevent — a stub the running app
+   can reach. The prompt's own wording ("component and E2E tests use stub adapters, but the
+   running app never reaches them") is the rule that was followed.
+3. **The flow is proven by e2e route interception instead.** Playwright stubs the HTTP layer
+   and drives the real components: two photos become two independently-resolving cards, a
+   refused photo costs one card, a low-confidence field is hedged and then settled by a
+   correction. When S6 lands, those stubs document the contract the endpoints must satisfy.
+4. **Error states were built in this phase, not deferred.** Clicking upload today hits a
+   404 and surfaces the real failure copy, per-card. Building the unhappy paths alongside
+   the happy one is cheaper than retrofitting them after the happy path exists.
+
+Trade-off:
+The wardrobe screen is not walkable by hand until S6. Accepted — the alternative was a
+product-reachable stub, which is a worse thing to own.
+
+---
+
+### 2026-09-12 — Polling controllers are per job, not per effect run
+
+A bug worth recording because the shape recurs.
+
+`useAnalysisPolling` first used one `AbortController` for every poller started in an effect
+run and aborted it in the effect's cleanup. `uploads` is a dependency and every
+`updateUpload` mutates it, so the effect re-ran each time a photo resolved — and the cleanup
+aborted all the *other* in-flight pollers. Combined with the guard that stops a job being
+polled twice, a batch of eight photos produced exactly **one** card.
+
+Fixed with one controller per job, aborted only on unmount. Found by the e2e assertion that
+two photos produce two cards, not by review — the single-card result looks plausible enough
+to miss.
+
+General lesson, third instance this build: an effect whose dependency it also mutates will
+re-run mid-flight. Anything long-lived started inside it must not be torn down by its own
+cleanup.

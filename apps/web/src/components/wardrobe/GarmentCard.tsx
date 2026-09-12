@@ -12,8 +12,9 @@ import { isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
  * like a guess. A field below the confidence floor renders as a hedge with a correction
  * affordance; a field the user has corrected renders as settled and is never re-hedged.
  *
- * Interaction (correcting a field, choosing it for an outfit) arrives in S3. This is the
- * presentational primitive the landing page and the wardrobe grid both use.
+ * Stays presentational. The correction and delete affordances render only when their
+ * handlers are supplied, so the landing page can use this as a pure illustration while the
+ * wardrobe grid gets the interactive version — one primitive, no fork.
  */
 
 const FIELD_LABELS: Array<{ key: keyof WardrobeItem & string; label: string }> = [
@@ -27,11 +28,16 @@ export function GarmentCard({
   item,
   className,
   imageSlot,
+  onCorrect,
+  onRemove,
 }: {
   item: WardrobeItem;
   className?: string;
-  /** S3 swaps in a real <Image>. Kept injectable so this primitive needs no asset to render. */
+  /** Injectable so this primitive needs no asset to render. */
   imageSlot?: React.ReactNode;
+  /** Supplying this renders the one-tap correction affordance. */
+  onCorrect?: () => void;
+  onRemove?: () => void;
 }) {
   const analyzing = item.status === "analyzing";
 
@@ -60,6 +66,12 @@ export function GarmentCard({
           {analyzing && <span className="text-ink-muted text-xs">Reading…</span>}
         </div>
 
+        {item.status === "failed" && (
+          <p className="text-danger text-sm">
+            We couldn&apos;t read this one. Correct it by hand, or remove it and retake the photo.
+          </p>
+        )}
+
         <dl className="space-y-1.5">
           {FIELD_LABELS.map(({ key, label }) => {
             const value = item[key];
@@ -87,6 +99,38 @@ export function GarmentCard({
             );
           })}
         </dl>
+
+        {(onCorrect || onRemove) && (
+          <div className="border-border flex items-center gap-2 border-t pt-3">
+            {onCorrect && (
+              <button
+                type="button"
+                onClick={onCorrect}
+                className={cn(
+                  "text-accent-deep hover:bg-accent-soft inline-flex min-h-[var(--size-touch)]",
+                  "items-center rounded-[var(--radius-pill)] px-3 text-sm font-medium",
+                  "transition-colors duration-[var(--duration-functional)]",
+                )}
+              >
+                Set it straight
+              </button>
+            )}
+            {onRemove && (
+              <button
+                type="button"
+                onClick={onRemove}
+                className={cn(
+                  "text-ink-muted hover:text-danger hover:bg-surface-muted ml-auto inline-flex",
+                  "min-h-[var(--size-touch)] items-center rounded-[var(--radius-pill)] px-3 text-sm",
+                  "transition-colors duration-[var(--duration-functional)]",
+                )}
+                aria-label={`Remove ${item.subcategory ?? item.category ?? "garment"}`}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </Card>
   );

@@ -54,7 +54,7 @@ export function Navbar() {
         </ul>
 
         <div className="flex items-center gap-2">
-          <ButtonLink href="#start" size="md" className="hidden sm:inline-flex">
+          <ButtonLink href="/wardrobe" size="md" className="hidden sm:inline-flex">
             Start my wardrobe
           </ButtonLink>
           <Button
@@ -84,7 +84,7 @@ export function Navbar() {
           ))}
         </ul>
         <ButtonLink
-          href="#start"
+          href="/wardrobe"
           size="lg"
           className="mt-4 w-full"
           onClick={() => setMenuOpen(false)}

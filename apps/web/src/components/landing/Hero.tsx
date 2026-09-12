@@ -32,7 +32,7 @@ export function Hero() {
 
       <Reveal delayMs={180}>
         <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <ButtonLink href="#start" size="lg">
+          <ButtonLink href="/wardrobe" size="lg">
             Start my wardrobe
           </ButtonLink>
           <ButtonLink href="#how" size="lg" variant="secondary">
