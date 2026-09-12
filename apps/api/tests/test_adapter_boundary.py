@@ -164,3 +164,39 @@ def test_the_adapter_config_does_hold_the_model_ids():
     for name in ("groq_text_model", "groq_vision_model", "groq_vision_fallback_model"):
         assert name in fields, f"{name} is no longer configuration"
         assert fields[name].default, f"{name} has no configured default"
+
+
+#: The workflow directory. Not Python, so `ast` cannot help — but a YAML file is
+#: configuration rather than prose, and a plain text scan is exactly right for it.
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+
+
+def test_ci_does_not_pin_a_model_id():
+    """The third place model ids were living, which neither rule could see.
+
+    CLAUDE.md allows them in `.env.example` and the adapter config. `live-smoke` also set
+    `GROQ_VISION_MODEL` and friends in its `env:` block, and the test above only scans
+    `apps/api/app/` — so the violation was invisible to the guard that exists for it.
+
+    Worse than untidy: those variables **override** the configured defaults. A model change
+    in `app/config.py` would have left the availability canary checking the old ids and
+    reporting green, which is the precise failure the canary exists to prevent.
+    """
+    if not WORKFLOWS.is_dir():  # pragma: no cover - CI config may be absent in a fork
+        return
+
+    offenders: list[str] = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                # A comment explaining why the ids are absent is not a model id.
+                continue
+            for prefix in MODEL_ID_PREFIXES:
+                if prefix in stripped.lower():
+                    offenders.append(f"{path.name}:{number}: {stripped}")
+
+    assert not offenders, (
+        "CI pins a model id, which overrides the configured default and makes the "
+        "availability check test the wrong thing:\n" + "\n".join(offenders)
+    )

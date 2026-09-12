@@ -14,7 +14,11 @@ import type { UploadEntry } from "@/lib/wardrobe-store";
  * shows its own reason in its own card and leaves the other seven alone
  * (docs/USER-FLOWS.md Flow 1, constraint 4).
  *
- * Stages are named, never a bare spinner (CLAUDE.md motion rules).
+ * Stages are named, never a bare spinner (CLAUDE.md motion rules). The names come from the
+ * job endpoint, verbatim — `STAGE_COPY` below is only the fallback for the moments before
+ * the server has anything to report, and for states the server has no opinion about
+ * (validating locally, refused locally). A stage the client invented would be a caption on
+ * a spinner.
  */
 
 const STAGE_COPY: Record<UploadEntry["state"], string> = {
@@ -30,10 +34,13 @@ export function UploadQueue({
   entries,
   onSetHint,
   onDismiss,
+  onRetry,
 }: {
   entries: readonly UploadEntry[];
   onSetHint: (localId: string, hint: GarmentCategory | null) => void;
   onDismiss: (localId: string) => void;
+  /** Re-runs extraction for one photo. Absent means the affordance is not offered. */
+  onRetry?: (localId: string) => void;
 }) {
   if (entries.length === 0) return null;
 
@@ -55,6 +62,14 @@ export function UploadQueue({
         {entries.map((entry) => {
           const failed = entry.state === "rejected" || entry.state === "failed";
           const busy = entry.state === "uploading" || entry.state === "analyzing";
+          // A locally refused file has no item on the server, so there is nothing to
+          // re-analyse — the user has to pick a different photo. Only a failed *extraction*
+          // can be retried, and only when the API said it was worth trying.
+          const canRetry =
+            onRetry !== undefined &&
+            entry.state === "failed" &&
+            entry.retryable &&
+            entry.itemId !== null;
 
           return (
             <li key={entry.localId}>
@@ -79,7 +94,7 @@ export function UploadQueue({
 
                 <div className="mt-3 flex items-center gap-2">
                   <Chip tone={failed ? "hedged" : entry.state === "ready" ? "confident" : "neutral"}>
-                    {STAGE_COPY[entry.state]}
+                    {(busy && entry.stage) || STAGE_COPY[entry.state]}
                   </Chip>
                   {busy && (
                     <span
@@ -92,6 +107,16 @@ export function UploadQueue({
                 </div>
 
                 {entry.error && <p className="text-danger mt-3 text-sm">{entry.error}</p>}
+
+                {canRetry && (
+                  <button
+                    type="button"
+                    onClick={() => onRetry(entry.localId)}
+                    className="border-border hover:border-ink mt-3 min-h-[var(--size-touch)] w-full rounded-[var(--radius-control)] border text-sm font-medium"
+                  >
+                    Read it again
+                  </button>
+                )}
 
                 {/* The hint is optional and editable while the photo is still in flight —
                     it is a prior for the model, not a decision the user is locked into. */}

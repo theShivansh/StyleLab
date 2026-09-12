@@ -10,13 +10,14 @@ import {
 /**
  * Wardrobe API surface, matching docs/API-SPEC.md.
  *
- * These are the only calls the wardrobe screens make. The endpoints themselves land in S6
- * (prompts/05-VTO.md) — until then these 404 and the UI shows its error states, which is
- * why those states are built in this phase rather than bolted on later.
+ * These are the only calls the wardrobe screens make. Live as of S6.
  *
  * Note what is NOT here: no endpoint accepts client-supplied item ids for composition.
  * Candidates are retrieved server-side from the caller's wardrobe, because accepting ids
  * from the request body would move the ownership boundary into the client's hands.
+ *
+ * Nothing here passes a user id either, for the same reason. Identity is the signed session
+ * token `apiClient` attaches — see `lib/session.ts`.
  */
 
 export interface PickedFile {
@@ -64,6 +65,29 @@ export function correctWardrobeItem(itemId: string, patch: Record<string, string
   );
 }
 
+/**
+ * Re-run extraction on one garment.
+ *
+ * The per-image retry the upload queue offers, and the one behind "read it again" on a card
+ * that failed. Returns a job, not a result: a retry that blocked would be a worse version of
+ * the thing the async pipeline exists to avoid.
+ *
+ * Fields the user has corrected are preserved server-side (docs/AI-EVAL-CASES.md Case 13) —
+ * the client does not have to protect them and must not try.
+ */
+export function reanalyzeWardrobeItem(itemId: string) {
+  return apiClient.post(
+    `/wardrobe/items/${encodeURIComponent(itemId)}/reanalyze`,
+    z.object({ item_id: z.string(), job_id: z.string(), status: z.string() }),
+  );
+}
+
+/**
+ * Soft-delete a garment, and learn what else it broke.
+ *
+ * `affected_outfits` is why this returns a body. A garment can be in a saved look, and
+ * deleting it without saying so leaves the user to find the hole themselves.
+ */
 export function deleteWardrobeItem(itemId: string) {
   return apiClient.delete(
     `/wardrobe/items/${encodeURIComponent(itemId)}`,

@@ -45,7 +45,7 @@ IMAGE = GarmentImage(asset_id="asset-1", storage_key="u1/private/shirt.jpg")
 
 @pytest.fixture
 def urls(stubs):
-    return stubs.FakeSignedUrls()
+    return stubs.FakeImageReferences()
 
 
 def analyzer(transport, urls, **over):

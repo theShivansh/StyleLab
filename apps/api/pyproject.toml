@@ -14,6 +14,9 @@ dependencies = [
     "pydantic-settings>=2.6",
     "sqlalchemy>=2.0",
     "python-multipart>=0.0.12",
+    # Image ingest: decode, EXIF strip, downscale. Floor not pin, and 11.3 is the floor
+    # because AVIF decoding arrived there and the upload allow-list offers AVIF.
+    "pillow>=11.3",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,110 @@
+"""Request dependencies.
+
+Everything long-lived is built once in the lifespan and hung on `app.state`; the functions
+here hand it to routes. Nothing is constructed per request, and nothing is read from a
+module-level global — an object a route can reach without being given it is an object a
+test cannot replace.
+
+`FaultError` is the bridge between the internal failure vocabulary
+(`app/services/faults.py`) and the HTTP error envelope. Routes raise it; one handler in
+`app/main.py` renders it. That is the only route to an error response, so a stack trace
+cannot reach a user through a path that forgot to catch something.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import Depends, Header, Request
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.security.identity import user_id_from
+from app.security.tokens import TokenError, TokenSigner
+from app.services.faults import Fault
+from app.services.ingest import WardrobeIngestService
+from app.services.jobs import InMemoryJobStore
+from app.services.storage import ObjectStore
+
+
+class FaultError(Exception):
+    """A failure that should become the documented error envelope."""
+
+    def __init__(self, fault: Fault) -> None:
+        super().__init__(fault.code)
+        self.fault = fault
+
+
+#: The two faults the routes raise most, written once so the copy cannot drift between them.
+NOT_FOUND = Fault(
+    "ITEM_NOT_FOUND", "We couldn't find that item in your wardrobe.", retryable=False, status=404
+)
+NO_SESSION = Fault(
+    "ITEM_NOT_FOUND",
+    "Your session has expired. Reload the page to start a new one.",
+    retryable=False,
+    status=401,
+)
+
+
+def signer(request: Request) -> TokenSigner:
+    return request.app.state.signer
+
+
+def sessions(request: Request) -> sessionmaker[Session]:
+    return request.app.state.sessions
+
+
+def store(request: Request) -> ObjectStore:
+    return request.app.state.store
+
+
+def jobs(request: Request) -> InMemoryJobStore:
+    return request.app.state.jobs
+
+
+def ingest(request: Request) -> WardrobeIngestService:
+    return request.app.state.ingest
+
+
+def current_user(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> str:
+    """The calling user's id, from a token this API signed.
+
+    401 when there is no usable token, with one message for every reason it failed — see
+    `app/security/tokens.py` on why the caller is not told which. The web client treats a
+    401 as "start a session and retry", so the distinction would be unused as well as
+    leaky.
+    """
+    try:
+        return user_id_from(authorization, request.app.state.signer)
+    except TokenError as error:
+        raise FaultError(NO_SESSION) from error
+
+
+CurrentUser = Annotated[str, Depends(current_user)]
+Sessions = Annotated["sessionmaker[Session]", Depends(sessions)]
+Ingest = Annotated[WardrobeIngestService, Depends(ingest)]
+Jobs = Annotated[InMemoryJobStore, Depends(jobs)]
+Signer = Annotated[TokenSigner, Depends(signer)]
+Store = Annotated[ObjectStore, Depends(store)]
+
+
+__all__ = [
+    "NOT_FOUND",
+    "NO_SESSION",
+    "CurrentUser",
+    "FaultError",
+    "Ingest",
+    "Jobs",
+    "Sessions",
+    "Signer",
+    "Store",
+    "current_user",
+    "ingest",
+    "jobs",
+    "sessions",
+    "signer",
+    "store",
+]

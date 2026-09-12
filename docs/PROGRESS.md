@@ -11,10 +11,10 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S1 | Foundation | 01 | done | (this commit) | L T U E B | pnpm workspace, Next 16 web, FastAPI api. Gate verified blocking. Python reversed to 3.11. |
 | S2 | Design system + landing | 02 | done | (this commit) | L T U E B A | Landing coherent 390/768/1440. Contrast 0 fails/86 nodes. Reveal rewritten for robustness. |
 | S2b | Reference → UI | 09 | skip? | — | — | only if refs provided |
-| S3 | Onboarding + composer | 03 | done-with-debt | (this commit) | L T U E B | Upload/analysis/correction built + proven via e2e stubs. "Completes against live Groq" deferred to S6 — endpoints do not exist yet. |
+| S3 | Onboarding + composer | 03 | done | (this commit) | L T U E B | Upload/analysis/correction built + proven via e2e stubs. The deferred "completes against live Groq" criterion was **met in S6** — see `tests/live/test_upload_pipeline.py`. Debt cleared. |
 | S4 | Wardrobe domain | 04 | done | (this commit) | L T U AI | Cross-user isolation red→green, then verified by 3 mutations (12 / 4 / 1 tests red). 109 api + 4 ai-eval tests. |
 | S5 | Groq adapter | 12 | done | (this commit) | L T U AI | Live adapters + transport seam. Mock replaces the transport, so real prompt/parse/retry/fallback run. 2 mutations verified. 259 tests. |
-| S6 | Upload + analysis pipeline | 05 | todo | — | — | |
+| S6 | Upload + analysis pipeline | 05 | done | (this commit) | L T U I E B AI | Live path verified end to end against real Groq on real photographs. EXIF+GPS strip, checksum cache, soft-delete cascade, signed image capabilities, named job stages. 8 mutations run. 424 api + 14 ai-eval + 8 live + 48 web tests. Found and fixed two S5 schema bugs no mock could see. |
 | S7 | Result + swap | 06 | todo | — | — | |
 | S8 | AI eval harness | 10 | todo | — | — | |
 | S8b | Agent crew + trends | 14 | todo | — | — | multi-agent advisory layer |
@@ -29,6 +29,9 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
 
 `L` lint · `T` typecheck · `U` unit · `I` integration · `E` e2e · `A` a11y · `B` build · `AI` ai-eval
 
+`I` first appears in S6: `tests/live/` exercises the real provider end to end. It needs a
+key, so it is a local-and-main gate rather than a per-push one.
+
 ## Open blockers
 
 - [x] B1 — CLOSED by the wardrobe pivot (2026-09-12). No seed catalogue; the wardrobe is
@@ -41,17 +44,25 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
       user's own garment photos.
 - [x] B5 — RESOLVED 2026-09-12. Vision primary qwen/qwen3.8-27b, fallback
       qwen/qwen3.6-27b (availability only, never for quality). See docs/DECISIONS.md.
-- [ ] B6 — Cold start is the top product risk: no demo wardrobe AND no demo mode means a
-      live upload and live Groq calls must both succeed in front of an interviewer. Stage
-      presenter garment photos in advance; hold the budget in docs/DEMO-SCRIPT.md.
-- [ ] B7 — GROQ_API_KEY. **Still open, and now the only thing between the build and a
-      live run.** S5 landed the adapters without it: the transport seam means every path is
-      tested against recorded provider responses, and `tests/live/` skips without a key
-      rather than failing. What a key unlocks:
-        1. `pytest tests/live -q` — is the schema actually honoured by the live models?
-        2. the boot model-availability check against the real model list
-        3. the first end-to-end run, which needs S6's endpoints too
-      Add it to `.env` and to repo secrets for the `live-smoke` job.
+- [ ] B6 — Cold start. **Materially reduced by S6, not closed.** The live upload path is
+      verified end to end and the three photographs in `data/samples/` extract correctly, so
+      the risk is now latency and network rather than "does it work". Two things still to do
+      before a live demo:
+        1. **Set `SESSION_SECRET`.** Without it the API signs with a per-process key, so a
+           pre-seeded demo wardrobe becomes unreachable the moment the process restarts —
+           which is exactly what happens when someone reloads a dev server mid-demo. Found
+           the hard way while verifying S6 in the browser.
+        2. Rehearse and time the live path; hold the budget in docs/DEMO-SCRIPT.md.
+- [x] B7 — CLOSED 2026-09-12. Key provisioned by the user in `.env`. It immediately paid
+      for itself: the first real run of `tests/live` failed three ways, and two were
+      genuine S5 bugs that **no mock could have caught** — a strict-mode schema Groq
+      refused outright, and a `field_confidence` object specified so that the provider was
+      forbidden from sending any scores at all. Both fixed in S6 with regression tests.
+      Still open for CI: the `live-smoke` job needs the key as a **repo secret** before it
+      can run on main. Everything else the key unlocked is now verified locally.
+        1. `pytest tests/live -q` — 8 passed against the real models
+        2. boot model-availability check — all three configured ids resolve
+        3. the full upload path end to end — `tests/live/test_upload_pipeline.py`
 - [x] B10 — CLOSED. User verified .env and .env.example by hand 2026-09-12. (A duplicate
       open row for the same blocker was carried from S2 and removed in S5 — the deny rule
       Read(./.env.*) still stands, so those files are staged explicitly, never by
@@ -65,11 +76,32 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
       that cannot fail is worthless (Case 21). The job stays red until S8b lands.
 - [ ] B12 — No migrations. `Base.metadata.create_all` covers tests and local work only;
       Alembic (or Supabase migrations) lands with deployment in S11. Until then the schema
-      only exists where someone has run create_all.
-- [ ] B13 — `data/samples/` is empty, so `tests/live/test_real_inference.py`'s extraction
-      smoke test skips. Needs two or three real photographs of single garments (own clothes,
-      not product shots — the directory is committed). Overlaps B6: the same photographs are
-      what a live demo needs staged in advance.
+      only exists where someone has run create_all. S6 made the local default concrete: an
+      unconfigured `DATABASE_URL` resolves to a file-backed SQLite database in the working
+      directory, gitignored, logged by dialect at boot.
+- [ ] B14 — The job runner is in-process (`BackgroundJobs`, asyncio tasks). It survives a
+      single instance and nothing more: a restart loses queued extractions, and a second
+      instance knows nothing of the first's jobs. The seam is deliberate — `submit` takes a
+      factory and returns nothing, so a durable queue replaces the class without touching
+      the pipeline. Lands with deployment in S11. What is **not** deferred is the part that
+      would be expensive to retrofit: nothing above the runner assumes a synchronous result.
+- [ ] B15 — No real authentication. `POST /session` mints a signed token for anyone who
+      asks and creates an anonymous user to go with it; there is no password, no
+      verification and no revocation. The **shape** is right and is what matters: identity
+      arrives as a bearer token this API signed, and `user_id` is read out of that signature
+      rather than from the request, so no caller can choose whose wardrobe to read. Supabase
+      auth in S11 replaces the minting and changes nothing else. Also: set `SESSION_SECRET`
+      in any environment where sessions must survive a restart or a second instance (B6).
+- [ ] B16 — Uploaded images are only ever soft-deleted. `deleted_at` is set on the item and
+      the asset and the file stops being served, but the bytes stay on disk — deliberate,
+      because docs/DATA-MODEL.md wants deletion reversible by support. A retention timer
+      that actually unlinks them belongs with the privacy flow in S11, and until it exists
+      "delete my photographs" is not fully true at the filesystem level.
+- [x] B13 — CLOSED 2026-09-12. Three photographs supplied by the user. They happen to be a
+      shirt, a pair of chinos and a white sneaker — a top, a bottom and footwear, which is
+      exactly one complete outfit and the minimum the composer needs. Live extraction reads
+      all three correctly, with `material_guess` hedged at 0.2/0.7/0.8 rather than asserted.
+      These are the demo wardrobe as well as the fixture (overlaps B6).
 
 ## Decisions taken mid-build
 

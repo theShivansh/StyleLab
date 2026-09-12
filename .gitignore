@@ -35,9 +35,18 @@ blob-report/
 tests/**/__screenshots__/*.actual.png
 
 # --- local user images (privacy rule in docs/SECURITY-PRIVACY.md) ---
+# `var/` is STORAGE_ROOT: uploaded garment photographs, private by default. It must never
+# be committed, and it is not under a web root. `data/samples/` is the deliberate
+# exception — a handful of photographs for the live suite, committed on purpose.
 /storage/
 /uploads/
+var/
 *.local.json
+
+# --- local database (B12: no migrations yet, so create_all writes this file) ---
+*.db
+*.db-journal
+*.sqlite3
 
 # --- os ---
 .DS_Store

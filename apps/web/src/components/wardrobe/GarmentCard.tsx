@@ -33,7 +33,11 @@ export function GarmentCard({
 }: {
   item: WardrobeItem;
   className?: string;
-  /** Injectable so this primitive needs no asset to render. */
+  /**
+   * Overrides the garment's own photograph. Used by the landing page, which illustrates the
+   * card with no server behind it — the wardrobe grid supplies nothing and gets the real
+   * image from `item.image_url`.
+   */
   imageSlot?: React.ReactNode;
   /** Supplying this renders the one-tap correction affordance. */
   onCorrect?: () => void;
@@ -48,7 +52,7 @@ export function GarmentCard({
       aria-busy={analyzing || undefined}
     >
       <div className="bg-surface-muted relative aspect-[4/5] w-full">
-        {imageSlot ?? <GarmentPlaceholder label={item.category ?? "garment"} />}
+        {imageSlot ?? <GarmentImage item={item} />}
 
         {item.quality_warnings.length > 0 && (
           <div className="absolute inset-x-3 bottom-3">
@@ -150,6 +154,49 @@ function warningLabel(warning: string | undefined): string {
 }
 
 /** Geometric stand-in. Not a photograph of a garment, and not pretending to be one. */
+/**
+ * The user's own photograph, or an honest absence.
+ *
+ * A plain `<img>` rather than `next/image`, and the lint rule is silenced below on purpose.
+ * `next/image` would route every wardrobe photograph through the Next server's optimiser,
+ * which writes them to an on-disk cache (`.next/cache/images`) outside the private store —
+ * a second, unsigned, unexpiring copy of the most sensitive asset in the product, and one
+ * the deletion flow knows nothing about. docs/SECURITY-PRIVACY.md asks for private storage
+ * and short-lived signed access; that is incompatible with a build-server image cache.
+ *
+ * The bandwidth argument the rule makes does not apply either: ingest already downscales,
+ * and the stored file is a JPEG we wrote.
+ *
+ * `image_url` is empty when the asset is gone, which happens to a card for a photo that was
+ * refused. The placeholder is the truthful rendering; a broken image icon is not.
+ */
+function GarmentImage({ item }: { item: WardrobeItem }) {
+  if (!item.image_url) return <GarmentPlaceholder label={item.category ?? "garment"} />;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- the optimiser's disk cache would hold an unsigned copy of a private photograph; see above
+    <img
+      src={item.image_url}
+      alt={garmentAlt(item)}
+      loading="lazy"
+      decoding="async"
+      className="h-full w-full object-cover"
+    />
+  );
+}
+
+/**
+ * Describes the garment, never the photograph's surroundings and never a person.
+ *
+ * Built from the extracted fields the model was asked for, which is also the guarantee that
+ * it cannot describe anything else: there is no field here for a room, a body or a face.
+ */
+function garmentAlt(item: WardrobeItem): string {
+  const parts = [item.color_primary, item.pattern, item.subcategory ?? item.category];
+  const described = parts.filter(Boolean).join(" ");
+  return described ? `${described}, from your wardrobe` : "A garment from your wardrobe";
+}
+
 function GarmentPlaceholder({ label }: { label: string }) {
   return (
     <div className="text-ink-muted/25 grid h-full w-full place-items-center" aria-hidden="true">

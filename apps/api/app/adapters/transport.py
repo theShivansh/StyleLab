@@ -19,10 +19,16 @@ them.
 
 ## Image references
 
-`SignedUrlSource` exists so the analyzer can turn a storage key into a short-lived URL
-without knowing what the storage is. Raw bytes never pass through domain code and images are
-never in a public bucket (docs/ARCHITECTURE.md section 4); a provider that needs to fetch an
-image gets a signed URL with a deadline on it.
+`ImageReferenceSource` exists so the analyzer can turn a storage key into something the
+provider can fetch, without knowing what the storage is. Raw bytes never pass through
+domain code and images are never in a public bucket (docs/ARCHITECTURE.md section 4).
+
+It was called `SignedUrlSource` when S5 wrote it, on the assumption that the answer was
+always a signed URL. S6 found the assumption wrong in the case that matters most: a local
+deployment's storage is a private directory, its own API is on `localhost`, and Groq's
+servers cannot fetch either. The only reference that works there is an inlined `data:` URL.
+Both are references with a deadline; only one is a signed URL, so the Protocol is named for
+what it returns rather than for one implementation of it.
 """
 
 from __future__ import annotations
@@ -112,16 +118,22 @@ class ChatTransport(Protocol):
 
 
 @runtime_checkable
-class SignedUrlSource(Protocol):
-    """Turns a private storage key into a short-lived URL a provider can fetch."""
+class ImageReferenceSource(Protocol):
+    """Turns a private storage key into something a provider can fetch.
 
-    async def signed_url(self, storage_key: str, *, ttl_s: int = 300) -> str: ...
+    A signed HTTPS URL when the storage is reachable from the internet; an inlined `data:`
+    URL when it is not. `ttl_s` bounds the first and is inert for the second — an inlined
+    image has no lifetime beyond the request it was built for, which is the stricter of the
+    two and needs no expiry to enforce.
+    """
+
+    async def provider_url(self, storage_key: str, *, ttl_s: int = 300) -> str: ...
 
 
 __all__ = [
     "ChatMessage",
     "ChatResult",
     "ChatTransport",
+    "ImageReferenceSource",
     "SchemaSpec",
-    "SignedUrlSource",
 ]

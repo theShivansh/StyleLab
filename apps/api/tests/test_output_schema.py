@@ -190,3 +190,101 @@ def test_the_schema_names_the_category_enum_explicitly():
     rendered = json.dumps(EXTRACTION_JSON_SCHEMA)
     for category in ("top", "bottom", "footwear", "outerwear", "accessory"):
         assert f'"{category}"' in rendered
+
+
+@pytest.mark.parametrize("schema", [EXTRACTION_JSON_SCHEMA, ADVICE_JSON_SCHEMA])
+def test_every_object_lists_all_of_its_properties_as_required(schema):
+    """Groq's strict Structured Outputs demands it, and nothing offline could have said so.
+
+    This test exists because the live suite's first real run returned a 400 naming all
+    thirteen extraction properties: strict mode cannot express an optional key, so every
+    property has to be in `required` and optionality has to be carried by a nullable type.
+    `MockGroqProvider` returns scripted content and never validates the schema it is handed,
+    so the entire offline suite was green against a schema the provider refused outright.
+
+    Asserted structurally rather than by re-listing the fields: a `required` array written
+    out here would be a third copy of the contract, which is the problem the derivation
+    exists to avoid.
+    """
+
+    def walk(node, path="$"):
+        if isinstance(node, dict):
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                assert set(node.get("required", [])) == set(properties), (
+                    f"{path}: required does not list every property"
+                )
+            for key, value in node.items():
+                walk(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]")
+
+    walk(schema)
+
+
+def test_a_field_that_was_optional_is_required_and_nullable():
+    """The other half: required-everywhere must not make optional fields mandatory in fact.
+
+    `category` has a default of `None` in the domain. In the schema it is required *and*
+    accepts null, so a model that cannot identify a garment still produces a valid response
+    — which matters, because "I could not tell" is an answer this product needs.
+    """
+    category = EXTRACTION_JSON_SCHEMA["properties"]["category"]
+
+    assert "category" in EXTRACTION_JSON_SCHEMA["required"]
+    assert {"type": "null"} in category["anyOf"]
+
+
+def test_field_confidence_can_actually_hold_scores():
+    """The bug behind the bug, and the more serious of the two.
+
+    `field_confidence` is `dict[str, float]`, which a strict schema cannot express: strict
+    mode needs `additionalProperties: false` on every object, and a free-form map closed
+    that way is an object permitted to hold **nothing**. That is what S5 generated — the
+    provider was being instructed, in a schema it obeys, that per-field confidence must be
+    empty. Every mock-backed test passed because the fixtures supplied scores the model was
+    forbidden from sending.
+
+    So the keys are enumerated. The assertion is that a score is expressible at all.
+    """
+    confidence = EXTRACTION_JSON_SCHEMA["properties"]["field_confidence"]
+
+    assert confidence["additionalProperties"] is False
+    assert confidence["properties"], "an object with no properties can carry no scores"
+    assert "category" in confidence["properties"]
+    assert "color_primary" in confidence["properties"]
+
+
+def test_confidence_is_offered_for_exactly_the_fields_a_user_can_correct():
+    """One list, one meaning: we can say we are unsure about what you can settle.
+
+    A hedge on a field with no correction path is a dead end in the UI; a correctable field
+    with no confidence never gets hedged and so never prompts for confirmation.
+    """
+    from app.domain.corrections import CORRECTABLE_FIELDS
+    from app.domain.schemas import CONFIDENCE_FIELDS
+
+    assert set(CONFIDENCE_FIELDS) == set(CORRECTABLE_FIELDS)
+    assert set(EXTRACTION_JSON_SCHEMA["properties"]["field_confidence"]["properties"]) == set(
+        CORRECTABLE_FIELDS
+    )
+
+
+def test_an_unassessed_confidence_score_is_dropped_rather_than_stored_as_null():
+    """`null` on the wire means "not assessed"; the domain says that by omitting the key.
+
+    Translating at the boundary is what keeps `GarmentExtraction.field_confidence` a plain
+    `dict[str, float]` instead of inheriting the provider's requirement that nothing be
+    optional.
+    """
+    extraction = parse_extraction(
+        json.dumps(
+            {
+                "category": "top",
+                "field_confidence": {"category": 0.9, "color_primary": None, "fit": None},
+            }
+        )
+    )
+
+    assert extraction.field_confidence == {"category": 0.9}

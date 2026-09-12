@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
       - run: pip install -e "apps/api[dev]"
-      - run: ruff check apps/api
+      - run: ruff check apps/api tests
       - run: pytest apps/api/tests -q
 
   ai-eval:
@@ -71,10 +71,12 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [ai-eval]
     env:
+      # The key only. Model ids are NOT pinned here: CLAUDE.md allows them in exactly two
+      # places, and these three lines were a silently diverging third — they *override* the
+      # configured defaults, so a model change in app/config.py would have left CI checking
+      # the availability of the old ids and reporting green. Removed in S6, and
+      # apps/api/tests/test_adapter_boundary.py now fails if they come back.
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      GROQ_TEXT_MODEL: openai/gpt-oss-120b
-      GROQ_VISION_MODEL: qwen/qwen3.8-27b
-      GROQ_VISION_FALLBACK_MODEL: qwen/qwen3.6-27b
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { config } from "./config";
 import { ApiError, apiErrorSchema } from "./errors";
+import { renewSession, sessionToken } from "./session";
 
 /**
  * Typed API client.
@@ -15,8 +16,12 @@ import { ApiError, apiErrorSchema } from "./errors";
 
 export interface RequestOptions {
   signal?: AbortSignal | undefined;
-  /** Server components pass this through; the browser relies on cookies. */
   headers?: Record<string, string> | undefined;
+  /**
+   * Skip the session token. Only for routes that have no owner — `POST /session` itself,
+   * and the health check. A wardrobe route reached this way answers 401, which is correct.
+   */
+  anonymous?: boolean | undefined;
 }
 
 async function parseError(response: Response): Promise<ApiError> {
@@ -46,6 +51,24 @@ async function parseError(response: Response): Promise<ApiError> {
   });
 }
 
+async function send(
+  url: string,
+  init: RequestInit,
+  options: RequestOptions,
+  token: string | null,
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    signal: options.signal ?? null,
+    headers: {
+      Accept: "application/json",
+      ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+  });
+}
+
 async function request<T>(
   path: string,
   schema: z.ZodType<T>,
@@ -54,15 +77,18 @@ async function request<T>(
 ): Promise<T> {
   const url = `${config.env.NEXT_PUBLIC_API_URL}/api/v1${path}`;
 
-  const response = await fetch(url, {
-    ...init,
-    signal: options.signal ?? null,
-    headers: {
-      Accept: "application/json",
-      ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-      ...options.headers,
-    },
-  });
+  // Every wardrobe route is ownership-scoped, so every call carries the signed token. The
+  // browser never names a user — see `lib/session.ts`.
+  let token = options.anonymous ? null : await sessionToken();
+  let response = await send(url, init, options, token);
+
+  if (response.status === 401 && !options.anonymous) {
+    // The API signs with a per-process key when SESSION_SECRET is unset, so a restart
+    // invalidates every token. One retry with a fresh session, then give up: a loop here
+    // would hammer the API on a genuine auth failure.
+    token = await renewSession();
+    response = await send(url, init, options, token);
+  }
 
   if (!response.ok) throw await parseError(response);
 

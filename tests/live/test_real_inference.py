@@ -40,7 +40,7 @@ class DataUrls:
     """Serves a local file as a data URL.
 
     The live suite has no object storage and no signing service, so the real
-    `SignedUrlSource` cannot be used here. A data URL keeps the image reference out of any
+    `ImageReferenceSource` cannot be used here. A data URL keeps the image reference out of any
     log while still exercising the real analyzer against the real model — which is what this
     suite is for. Production passes a short-lived signed URL instead; that path is covered
     by `apps/api/tests/test_groq_adapter.py`.
@@ -49,7 +49,7 @@ class DataUrls:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    async def signed_url(self, storage_key: str, *, ttl_s: int = 300) -> str:
+    async def provider_url(self, storage_key: str, *, ttl_s: int = 300) -> str:
         encoded = base64.b64encode(self.path.read_bytes()).decode("ascii")
         suffix = "jpeg" if self.path.suffix in {".jpg", ".jpeg"} else self.path.suffix.lstrip(".")
         return f"data:image/{suffix};base64,{encoded}"

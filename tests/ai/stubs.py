@@ -317,8 +317,8 @@ class MockGroqProvider:
         return [call.model for call in self.calls]
 
 
-class FakeSignedUrls:
-    """A `SignedUrlSource` that hands back an opaque, obviously-fake URL.
+class FakeImageReferences:
+    """A `ImageReferenceSource` that hands back an opaque, obviously-fake URL.
 
     Records what it was asked for so a test can assert the analyzer passed a storage key
     and never raw bytes.
@@ -328,7 +328,7 @@ class FakeSignedUrls:
         self.base = base
         self.requested: list[tuple[str, int]] = []
 
-    async def signed_url(self, storage_key: str, *, ttl_s: int = 300) -> str:
+    async def provider_url(self, storage_key: str, *, ttl_s: int = 300) -> str:
         self.requested.append((storage_key, ttl_s))
         return f"{self.base}/{storage_key}?exp={ttl_s}"
 
@@ -336,7 +336,7 @@ class FakeSignedUrls:
 __all__ = [
     "FIXTURES",
     "FailingAdvisor",
-    "FakeSignedUrls",
+    "FakeImageReferences",
     "MockGroqProvider",
     "RecordedCall",
     "ScriptedAdvisor",

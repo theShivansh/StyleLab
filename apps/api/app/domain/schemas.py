@@ -25,6 +25,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.domain.corrections import CORRECTABLE_FIELDS
 from app.domain.errors import SchemaInvalidError
 from app.domain.models import GarmentExtraction, OutfitAdvice
 
@@ -74,13 +75,103 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return resolve(schema)
 
 
+def _require_all_properties(node: Any) -> Any:
+    """List every property of every object in its `required` array.
+
+    Strict Structured Outputs demands it: a provider that guarantees adherence has to know
+    the full key set up front, so "optional" is not a thing a strict schema can express.
+    Optionality is carried by the *type* instead — Pydantic already emits
+    `anyOf: [{...}, {"type": "null"}]` for every `X | None` field, so a required-and-nullable
+    field is exactly the field that was optional.
+
+    Derived rather than declared, for the same reason the schemas are: a new model field
+    would otherwise be absent from `required` and silently become a field the provider is
+    allowed to omit.
+
+    This was missing until S6 and could not have been caught by a mock — `MockGroqProvider`
+    returns scripted content and never validates the schema it was handed. The live suite
+    found it on its first real run, with a 400 naming all thirteen properties.
+    """
+    if isinstance(node, dict):
+        rebuilt = {key: _require_all_properties(value) for key, value in node.items()}
+        properties = rebuilt.get("properties")
+        if isinstance(properties, dict):
+            rebuilt["required"] = list(properties)
+        return rebuilt
+    if isinstance(node, list):
+        return [_require_all_properties(item) for item in node]
+    return node
+
+
+#: The fields a per-field confidence score may describe.
+#:
+#: Deliberately the same set the user can correct (`app.domain.corrections`). The score's
+#: only job is to decide what the UI hedges and offers for confirmation, so a score for
+#: something the user cannot then fix would be a hedge with no way out of it. One list, one
+#: meaning: *we can tell you we are unsure about exactly the things you can settle.*
+CONFIDENCE_FIELDS: tuple[str, ...] = tuple(sorted(CORRECTABLE_FIELDS))
+
+
+def _confidence_schema() -> dict[str, Any]:
+    """A fixed-key object for `field_confidence`, because an open map is inexpressible here.
+
+    `dict[str, float]` is the right domain type and an impossible strict schema: strict mode
+    requires `additionalProperties: false` on every object, which for a free-form map means
+    an object permitted to hold nothing at all. That is what S5 generated, and the effect
+    was worse than a validation error — the provider was being told, in a schema it obeys,
+    that per-field confidence must be **empty**. The honesty signal the whole extraction
+    path rests on was specified as unreachable, and every mock-backed test passed because a
+    fixture supplied the scores the model was forbidden to send.
+
+    Enumerating the keys fixes it and reads better in a prompt log. Scores are nullable
+    because a model that did not assess a field should say so rather than invent a number;
+    `_strip_absent_confidence` drops the nulls before validation.
+    """
+    return {
+        "type": "object",
+        "description": (
+            "Confidence in each field, 0-1. Null for a field you did not assess. "
+            "A low score is useful and expected; do not inflate one."
+        ),
+        "properties": {
+            field: {
+                "anyOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]
+            }
+            for field in CONFIDENCE_FIELDS
+        },
+        "required": list(CONFIDENCE_FIELDS),
+        "additionalProperties": False,
+    }
+
+
 def _schema_for(model: type[BaseModel]) -> dict[str, Any]:
     schema = model.model_json_schema(mode="serialization")
-    return _close_objects(_inline_refs(schema))
+    return _require_all_properties(_close_objects(_inline_refs(schema)))
 
 
 EXTRACTION_JSON_SCHEMA: dict[str, Any] = _schema_for(GarmentExtraction)
+EXTRACTION_JSON_SCHEMA["properties"]["field_confidence"] = _confidence_schema()
+
 ADVICE_JSON_SCHEMA: dict[str, Any] = _schema_for(OutfitAdvice)
+
+
+def _strip_absent_confidence(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop unassessed confidence scores before validation.
+
+    The wire schema asks for every key so that strict mode can hold; `null` there means "not
+    assessed", which the domain represents by the key's absence from `dict[str, float]`.
+    Translating at the boundary keeps `GarmentExtraction` free of the provider's requirement
+    that nothing be optional.
+    """
+    scores = payload.get("field_confidence")
+    if not isinstance(scores, dict):
+        return payload
+    return {
+        **payload,
+        "field_confidence": {
+            field: score for field, score in scores.items() if score is not None
+        },
+    }
 
 
 def _as_mapping(raw: object, *, what: str) -> dict[str, Any]:
@@ -139,7 +230,7 @@ def _describe(error: ValidationError, *, what: str) -> str:
 
 def parse_extraction(raw: object) -> GarmentExtraction:
     """Validate one vision response. Raises `SchemaInvalidError`, never returns a partial."""
-    payload = _as_mapping(raw, what="extraction")
+    payload = _strip_absent_confidence(_as_mapping(raw, what="extraction"))
     try:
         return GarmentExtraction.model_validate(payload)
     except ValidationError as error:
@@ -161,6 +252,7 @@ def parse_advice(raw: object) -> OutfitAdvice:
 
 __all__ = [
     "ADVICE_JSON_SCHEMA",
+    "CONFIDENCE_FIELDS",
     "EXTRACTION_JSON_SCHEMA",
     "parse_advice",
     "parse_extraction",

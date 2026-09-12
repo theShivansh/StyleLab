@@ -5,6 +5,29 @@ Base: `/api/v1`
 Every wardrobe route is ownership-scoped. A request for an item the caller does not own
 returns 404, never 403 — do not confirm the existence of another user's item.
 
+## Identity
+
+Every wardrobe route requires `Authorization: Bearer <token>`, where the token was minted
+and signed by this API. Missing, malformed, expired and forged tokens all answer **401** with
+the same message; the caller's response to each is the same, and distinguishing them tells
+an attacker which of their guesses was structurally right.
+
+**The caller never names the user.** `user_id` is read out of our own signature, never from
+a header or a request body. A client-supplied id would make every scoped query below
+decorative — see `apps/api/app/security/identity.py`.
+
+### POST /session
+
+Creates an anonymous user and returns a token for it. Takes no body: a `POST /session` that
+accepted a `user_id` would be a login with no credential.
+
+```json
+{ "user_id": "user_a1b2c3", "token": "<opaque>", "expires_in": 2592000 }
+```
+
+Not authentication — an identity *seam* of the right shape. Real accounts arrive in S11 with
+Supabase auth; the header and every scoped query stay as they are.
+
 ## POST /wardrobe/items
 
 Multi-image upload. Each file is validated independently.
@@ -12,7 +35,10 @@ Multi-image upload. Each file is validated independently.
 Input: `multipart/form-data` — `images[]`, plus an optional `category_hint` per file
 (used directly by the demo analyzer, treated as a prior by the live one).
 
-Return:
+`201`, with one result per file **in the order the files were sent**. The client maps
+results back onto cards it has already rendered by index, so a refusal keeps its slot even
+though it carries no ids.
+
 ```json
 {
   "items": [
@@ -24,19 +50,57 @@ Return:
 ```
 
 Partial success is a success. A rejected image returns its own error and does not affect
-the others.
+the others, and the batch is never failed as a whole.
+
+`status` is `analyzing` or `rejected` and nothing else. A re-upload of a photograph already
+in the caller's wardrobe is also `analyzing`, with a `job_id` that is already `completed` —
+the checksum cache answers it and no model is called. A third status meaning "already done"
+would have added a branch to every card in the UI to save one round trip.
+
+Validation before storage, in this order: byte ceiling, then **the real format sniffed from
+magic bytes** (never the declared `Content-Type`), then a pixel ceiling read from the header,
+then decode, then a resolution floor. EXIF is stripped on ingest — GPS included — with
+orientation *applied* first, or every portrait photograph would be stored on its side.
 
 ## GET /jobs/{job_id}
+
+Ownership-scoped like everything else: another user's job answers 404. A job id is random
+and unguessable, and "unguessable" is not an authorisation model.
 
 ```json
 {
   "job_id": "job_1",
   "type": "analyze_item",
   "status": "processing",
-  "stage": "reading garment",
+  "stage": "reading colour and cut",
   "progress": 0.6
 }
 ```
+
+`stage` is one of the named extraction stages, in order — `reading photo`, `finding
+garment`, `reading colour and cut`, `checking confidence`, `ready`. Each corresponds to work
+that actually happens before the next one; a stage that fires immediately after its
+predecessor is a spinner with a caption. `progress` is derived from `stage`, so the two
+cannot disagree.
+
+On failure the job carries the reason, written server-side against the actual failure:
+
+```json
+{
+  "job_id": "job_1", "type": "analyze_item", "status": "failed",
+  "stage": null, "progress": null,
+  "error": { "code": "PROVIDER_TIMEOUT",
+             "message": "Reading that photo took too long. Try it again.",
+             "retryable": true }
+}
+```
+
+`retryable` answers "would doing this again plausibly work?" — true for a timeout, false for
+a model id that no longer resolves. A card offering a retry that cannot help wastes the
+user's time instead of ours.
+
+One job per image, never one per batch. A batch-level job has one status, and one status
+means one spinner over eight photographs.
 
 ## GET /wardrobe/items
 
@@ -70,9 +134,23 @@ from subsequent re-analysis.
 { "color_primary": "navy" }
 ```
 
+Returns the full updated item. A field outside the correctable set, or an invalid value for
+one inside it, answers `422` naming the field and never echoing the value. An unknown field
+is refused rather than ignored: silently dropping it leaves the user looking at a screen
+that says the correction saved when nothing did.
+
 ## POST /wardrobe/items/{item_id}/reanalyze
 
-Re-runs extraction. Fields in `corrected_fields` are preserved, not recomputed.
+Re-runs extraction. Fields in `corrected_fields` are preserved, not recomputed. `202` and a
+job, not a result — this is the per-image retry, and a retry that blocked would be a worse
+version of what the async pipeline exists to avoid.
+
+```json
+{ "item_id": "item_1", "job_id": "job_9", "status": "analyzing" }
+```
+
+The checksum cache is deliberately not consulted: the button asks the model again, and
+answering from the last answer would make it a lie.
 
 ## DELETE /wardrobe/items/{item_id}
 
@@ -82,6 +160,13 @@ so the UI can say what else changed.
 ```json
 { "deleted": true, "affected_outfits": ["outfit_7"] }
 ```
+
+Soft on both rows, because docs/DATA-MODEL.md wants deletion observable and reversible by
+support. "Reversible by support" is not "still in the product": a deleted item answers 404
+on every read, disappears from the wardrobe, and its `image_url` stops serving even though
+the token has not expired. Affected outfits become `incomplete` rather than being discarded —
+the user composed that look, and the honest answer to one missing piece is to say which
+piece (AI-EVAL-CASES Case 14).
 
 ## POST /outfits/compose
 
@@ -165,6 +250,35 @@ Idempotent.
 
 The audit trail — what each model returned, what was rejected and why. Powers the
 "show me the grounding" moment in the demo.
+
+```json
+{ "item_id": "item_1",
+  "extractions": [
+    { "provider": "groq", "model": "...", "raw_output": "...",
+      "schema_valid": true, "rejected_reason": null, "latency_ms": 1841 }
+  ] }
+```
+
+Rows exist for rejected attempts too, including the raw text that failed to parse. An audit
+trail reachable only through a successful analysis is an audit trail of successes.
+
+## GET /assets/{asset_id}/{token}
+
+The stored photograph. The only way an uploaded image leaves the server, and the value of
+`image_url` on a wardrobe item.
+
+The token is a signed, expiring capability naming **one owner and one asset**, minted fresh
+each time an item is read. It sits in the path, not the query string, because
+docs/SECURITY-PRIVACY.md says signed URLs are never placed in one — and a path segment
+satisfies that literally while behaving identically in an `<img src>` cross-origin with no
+cookie.
+
+Everything that does not verify answers 404: expired, forged, wrong purpose, pointed at a
+different asset, or belonging to a deleted item. The owner comes out of the signature, so the
+handler still reads through the same ownership-scoped query as every other route.
+
+Access logs must not record the token. Enforced at the logging layer
+(`apps/api/app/logging_setup.py`), not by asking callers to remember.
 
 ## Error contract
 

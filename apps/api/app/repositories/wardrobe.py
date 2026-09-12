@@ -29,6 +29,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AssetRow,
     ItemExtractionRow,
     OutfitItemRow,
     OutfitRow,
@@ -45,7 +46,7 @@ from app.domain.models import (
     WardrobeItem,
 )
 
-_Owned = TypeVar("_Owned", WardrobeItemRow, OutfitRow, OutfitItemRow)
+_Owned = TypeVar("_Owned", AssetRow, WardrobeItemRow, OutfitRow, OutfitItemRow)
 
 
 def _scoped_select(user_id: str, row: type[_Owned]) -> Select[tuple[_Owned]]:
@@ -99,6 +100,15 @@ def _to_domain(row: WardrobeItemRow) -> WardrobeItem:
     )
 
 
+def _to_stored(row: WardrobeItemRow) -> StoredItem:
+    return StoredItem(
+        item=_to_domain(row),
+        asset_id=row.asset_id,
+        analyzed_by=row.analyzed_by,
+        analyzed_at=row.analyzed_at,
+    )
+
+
 def _write_extraction(row: WardrobeItemRow, item: WardrobeItem) -> None:
     """Copy a domain item's extraction onto its row."""
     extraction = item.extraction
@@ -130,6 +140,46 @@ class StoredOutfit:
     status: str
     degradation_level: int
     item_ids: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredItem:
+    """A wardrobe item plus the row facts the domain has no use for.
+
+    `WardrobeItem` is the domain object and stays free of storage and provider concepts, so
+    the asset id and the model that produced the current reading travel beside it rather
+    than inside it. The API needs both — one to mint an image URL, one for the audit panel.
+    """
+
+    item: WardrobeItem
+    asset_id: str | None
+    analyzed_by: str | None
+    analyzed_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class StoredAsset:
+    asset_id: str
+    user_id: str
+    storage_key: str
+    mime_type: str
+    byte_size: int
+    width: int | None
+    height: int | None
+    checksum: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DeletionResult:
+    """What a delete actually did, so the UI can say what else changed.
+
+    `affected_outfits` is the point. Deleting a garment silently leaving a hole in a saved
+    outfit is docs/AI-EVAL-CASES.md Case 14 failing: the outfit must report itself
+    incomplete rather than render a gap.
+    """
+
+    deleted: bool
+    affected_outfits: list[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +320,85 @@ class WardrobeRepository:
         self._session.flush()
         return True
 
+    def delete_with_cascade(self, user_id: str, item_id: str) -> DeletionResult:
+        """Soft-delete an item, its asset, and mark the outfits that now have a hole.
+
+        The cascade runs asset-ward and outfit-ward from one call because the three writes
+        have to agree. A deleted item whose asset survives leaves the photograph on disk
+        after the user asked for it gone; a deleted item inside a `ready` outfit leaves the
+        result screen rendering a garment that no longer exists.
+
+        Outfits are marked `incomplete` rather than deleted. The user composed it, and the
+        honest response to one missing piece is to say which piece and offer a swap
+        (docs/AI-EVAL-CASES.md Case 14) — not to quietly discard their look.
+        """
+        row = self._row(user_id, item_id)
+        if row is None:
+            return DeletionResult(deleted=False, affected_outfits=[])
+
+        now = _now()
+        row.deleted_at = now
+
+        if row.asset_id:
+            asset = self._session.execute(
+                _scoped_select(user_id, AssetRow).where(AssetRow.id == row.asset_id)
+            ).scalar_one_or_none()
+            if asset is not None:
+                asset.deleted_at = now
+
+        affected = sorted(
+            {
+                join.outfit_id
+                for join in self._session.execute(
+                    _scoped_select(user_id, OutfitItemRow).where(
+                        OutfitItemRow.wardrobe_item_id == item_id
+                    )
+                ).scalars()
+            }
+        )
+        for outfit_id in affected:
+            outfit = self._session.execute(
+                _scoped_select(user_id, OutfitRow).where(OutfitRow.id == outfit_id)
+            ).scalar_one_or_none()
+            if outfit is not None:
+                outfit.status = "incomplete"
+
+        self._session.flush()
+        return DeletionResult(deleted=True, affected_outfits=affected)
+
+    # --- reads that carry row facts ------------------------------------------------------
+
+    def stored(self, user_id: str, item_id: str) -> StoredItem | None:
+        """One item with its asset id. The read behind `GET /wardrobe/items/{id}`."""
+        row = self._row(user_id, item_id)
+        return _to_stored(row) if row else None
+
+    def items(
+        self,
+        user_id: str,
+        *,
+        category: GarmentCategory | None = None,
+        statuses: Sequence[ItemStatus] | None = None,
+    ) -> list[StoredItem]:
+        """The caller's wardrobe, newest first.
+
+        Unlike `candidates`, this includes items still analysing and items that failed —
+        the wardrobe screen has to show a card for a photo that could not be read, or the
+        user's file appears to have vanished. `candidates` is the narrower set the advisor
+        sees and stays restricted to `ready`.
+        """
+        statement = _scoped_select(user_id, WardrobeItemRow).where(
+            WardrobeItemRow.deleted_at.is_(None)
+        )
+        if category is not None:
+            statement = statement.where(WardrobeItemRow.category == category.value)
+        if statuses is not None:
+            statement = statement.where(
+                WardrobeItemRow.status.in_([s.value for s in statuses])
+            )
+        statement = statement.order_by(WardrobeItemRow.created_at.desc(), WardrobeItemRow.id)
+        return [_to_stored(row) for row in self._session.execute(statement).scalars()]
+
     # --- outfits -----------------------------------------------------------------------
 
     def save_outfit(
@@ -357,9 +486,21 @@ class WardrobeRepository:
 
         Deliberately not `Session.get(WardrobeItemRow, item_id)`: a primary-key load skips
         the filter and would hand back any user's garment.
+
+        Soft-deleted rows are excluded here rather than at each call site. S6 added the read
+        behind `GET /wardrobe/items/{id}` on top of this method and a deleted garment kept
+        answering 200 — deletion looked like it worked in the list view and had not happened
+        anywhere else. The same omission made `DELETE` idempotent-by-accident (a second
+        delete reported success) and would have let a correction or a re-analysis be applied
+        to a garment the user had thrown away.
+
+        `deleted_at` is what makes deletion observable and reversible by support
+        (docs/DATA-MODEL.md). "Reversible by support" is not "still present in the product".
         """
         return self._session.execute(
-            _scoped_select(user_id, WardrobeItemRow).where(WardrobeItemRow.id == item_id)
+            _scoped_select(user_id, WardrobeItemRow).where(
+                WardrobeItemRow.id == item_id, WardrobeItemRow.deleted_at.is_(None)
+            )
         ).scalar_one_or_none()
 
 
@@ -429,9 +570,106 @@ class ExtractionAuditRepository:
         ]
 
 
+class AssetRepository:
+    """Private image records. One row per uploaded file.
+
+    Holds no bytes — `app.services.storage` owns those. This is the index that maps an
+    asset id to a storage key, plus the checksum that makes re-uploading a photograph free.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(
+        self,
+        user_id: str,
+        *,
+        asset_id: str,
+        storage_key: str,
+        mime_type: str,
+        byte_size: int,
+        width: int | None,
+        height: int | None,
+        checksum: str,
+    ) -> StoredAsset:
+        self._session.add(
+            AssetRow(
+                id=asset_id,
+                user_id=user_id,
+                storage_key=storage_key,
+                mime_type=mime_type,
+                byte_size=byte_size,
+                width=width,
+                height=height,
+                checksum=checksum,
+            )
+        )
+        self._session.flush()
+        return StoredAsset(
+            asset_id=asset_id,
+            user_id=user_id,
+            storage_key=storage_key,
+            mime_type=mime_type,
+            byte_size=byte_size,
+            width=width,
+            height=height,
+            checksum=checksum,
+        )
+
+    def get(self, user_id: str, asset_id: str) -> StoredAsset | None:
+        row = self._session.execute(
+            _scoped_select(user_id, AssetRow).where(
+                AssetRow.id == asset_id, AssetRow.deleted_at.is_(None)
+            )
+        ).scalar_one_or_none()
+        return _to_stored_asset(row) if row else None
+
+    def by_checksum(self, user_id: str, checksum: str) -> StoredAsset | None:
+        """The checksum cache lookup, **scoped to one user**.
+
+        The scope is the whole security story of this method. An unscoped checksum index
+        would be a global deduplication table: upload a photograph somebody else already
+        uploaded and you would be handed their asset, their extraction and their garment.
+        Two users who own the same jacket and photograph it identically get two assets, two
+        analyses and two rows, and that is the correct answer rather than waste.
+        """
+        row = self._session.execute(
+            _scoped_select(user_id, AssetRow).where(
+                AssetRow.checksum == checksum, AssetRow.deleted_at.is_(None)
+            )
+        ).scalars().first()
+        return _to_stored_asset(row) if row else None
+
+    def item_for_asset(self, user_id: str, asset_id: str) -> str | None:
+        """The live wardrobe item backed by this asset, if any."""
+        row = self._session.execute(
+            _scoped_select(user_id, WardrobeItemRow).where(
+                WardrobeItemRow.asset_id == asset_id, WardrobeItemRow.deleted_at.is_(None)
+            )
+        ).scalars().first()
+        return row.id if row else None
+
+
+def _to_stored_asset(row: AssetRow) -> StoredAsset:
+    return StoredAsset(
+        asset_id=row.id,
+        user_id=row.user_id,
+        storage_key=row.storage_key,
+        mime_type=row.mime_type,
+        byte_size=row.byte_size,
+        width=row.width,
+        height=row.height,
+        checksum=row.checksum,
+    )
+
+
 __all__ = [
+    "AssetRepository",
+    "DeletionResult",
     "ExtractionAuditRepository",
+    "StoredAsset",
     "StoredExtraction",
+    "StoredItem",
     "StoredOutfit",
     "WardrobeRepository",
 ]

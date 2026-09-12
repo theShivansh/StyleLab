@@ -66,9 +66,16 @@ export function useAnalysisPolling() {
             const job = await getJob(jobId, controller.signal);
 
             if (job.status === "failed") {
+              // The server's message, not ours. It was written against the actual failure
+              // and it says whether retrying is worth the user's time; a generic local
+              // string would be worse copy about something we know less about.
               updateUpload(upload.localId, {
                 state: "failed",
-                error: "We couldn't read that photo. Retake it, or add the details by hand.",
+                stage: job.stage,
+                error:
+                  job.error?.message ??
+                  "We couldn't read that photo. Retake it, or add the details by hand.",
+                retryable: job.error?.retryable ?? true,
               });
               return;
             }
@@ -80,8 +87,14 @@ export function useAnalysisPolling() {
               }
               const item = await getWardrobeItem(itemId, controller.signal);
               upsertItem(item);
-              updateUpload(upload.localId, { state: "ready" });
+              updateUpload(upload.localId, { state: "ready", stage: job.stage });
               return;
+            }
+
+            // Named work, straight from the job. This is what makes the card say "reading
+            // colour and cut" rather than spinning.
+            if (job.stage !== upload.stage) {
+              updateUpload(upload.localId, { stage: job.stage });
             }
 
             await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));

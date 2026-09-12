@@ -21,7 +21,11 @@ Private image storage records. One row per uploaded file.
 - byte_size
 - width
 - height
-- checksum
+- checksum           *(sha256 of the **normalised** bytes — after EXIF stripping and
+                     re-encoding, so the same photograph off two phones is one image.
+                     The analysis cache keys on this, **scoped to one user**: a global
+                     checksum index would deduplicate across wardrobes and hand one
+                     user another's extraction.)*
 - created_at
 - deleted_at
 
@@ -56,7 +60,11 @@ Replaces the old `garments` table. A garment the user owns, not a product for sa
 - occasion_tags
 - style_tags
 - extraction_confidence   *(overall, 0–1)*
-- field_confidence        *(per-field map — drives which fields prompt for confirmation)*
+- field_confidence        *(per-field map — drives which fields prompt for confirmation.
+                          Keyed by the fields the user can correct, and no others: a hedge
+                          on a field with no correction path is a dead end. The wire schema
+                          enumerates those keys because a free-form map cannot be expressed
+                          under strict Structured Outputs — see docs/DECISIONS.md, S6.)*
 - corrected_fields        *(fields the user overrode; re-analysis must never overwrite these)*
 - analyzed_by             *(model id; null before the first analysis. There is no
                           deterministic extraction path — see docs/DECISIONS.md)*
@@ -145,4 +153,8 @@ Async work. With VTO removed, the analysis job is the async path.
   deletion to be observable and reversible-by-support, not silent.
 - Deleting an asset must cascade to the wardrobe item that depends on it, and any outfit
   referencing that item becomes `status = incomplete` rather than silently rendering a gap.
+- Soft deletion must be invisible to the product. Every scoped read filters `deleted_at`, so
+  a deleted item answers 404, leaves the wardrobe, and stops serving its image — "reversible
+  by support" is not "still there". The stored bytes are a separate question and are not yet
+  unlinked (blocker B16).
 - Unique event IDs when ingestion is retried.

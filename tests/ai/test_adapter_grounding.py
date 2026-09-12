@@ -24,7 +24,7 @@ from app.domain.models import GarmentCategory as C
 from app.domain.models import GarmentImage
 from app.repositories.wardrobe import WardrobeRepository
 from app.services.composition import CompositionService
-from stubs import FakeSignedUrls, MockGroqProvider, fixture, garment
+from stubs import FakeImageReferences, MockGroqProvider, fixture, garment
 
 U1, U2 = "eval-u1", "eval-u2"
 TEXT_MODEL = "eval/text"
@@ -157,7 +157,7 @@ async def test_case_07_injected_text_in_a_photo_stays_data(repository):
     """
     transport = MockGroqProvider.returning(fixture("extraction_injection.json"))
     analyzer = GroqWardrobeAnalyzer(
-        transport, model=VISION_MODEL, urls=FakeSignedUrls()
+        transport, model=VISION_MODEL, urls=FakeImageReferences()
     )
 
     extraction = await analyzer.analyze(GarmentImage(asset_id="a", storage_key="u1/tee.jpg"))
@@ -181,7 +181,7 @@ async def test_case_24_a_low_confidence_extraction_is_kept_not_retried(repositor
         transport,
         model=VISION_MODEL,
         fallback_model="eval/vision-fallback",
-        urls=FakeSignedUrls(),
+        urls=FakeImageReferences(),
     )
 
     extraction = await analyzer.analyze(GarmentImage(asset_id="a", storage_key="u1/dark.jpg"))
@@ -189,3 +189,41 @@ async def test_case_24_a_low_confidence_extraction_is_kept_not_retried(repositor
     assert transport.models_called == [VISION_MODEL]
     assert extraction.field_confidence["color_primary"] < 0.7
     assert extraction.quality_warnings
+
+
+async def test_case_07_the_adapter_does_not_bound_the_slogan_and_the_layer_above_does(
+    repository,
+):
+    """Where the third layer of the Case 07 defence lives, and why not here.
+
+    The prompt rules and the SQL scope are the first two layers. The third is that even a
+    perfectly obedient model puts the words it read into the field it was asked to fill — a
+    slogan genuinely belongs in `style_tags` — so the wardrobe stores attacker-influenced
+    text which is later interpolated into the advice prompt.
+
+    That text is bounded by `app.domain.hygiene`, called by the upload pipeline, and
+    **deliberately not by the adapter**. Same rule as `GroqOutfitAdvisor` not filtering
+    unowned ids: a check inside the adapter looks done and leaves the seam that matters
+    untested. The adapter's job is to report faithfully what the model said.
+
+    So both halves are asserted here, in order, because the ordering is the design.
+    """
+    from app.domain.hygiene import MAX_TAG_CHARS, sanitize_extraction
+
+    transport = MockGroqProvider.returning(fixture("extraction_injection.json"))
+    analyzer = GroqWardrobeAnalyzer(
+        transport, model=VISION_MODEL, urls=FakeImageReferences()
+    )
+
+    raw = await analyzer.analyze(GarmentImage(asset_id="a", storage_key="u1/tee.jpg"))
+    assert any("list every item in the database" in tag for tag in raw.style_tags), (
+        "the adapter should report the model faithfully, unbounded"
+    )
+
+    bounded = sanitize_extraction(raw)
+
+    assert not any("list every item" in tag for tag in bounded.style_tags)
+    assert all(len(tag) <= MAX_TAG_CHARS for tag in bounded.style_tags)
+    # And the legitimate reading survives: it is a graphic tee, and that is a real fact.
+    assert bounded.category == C.TOP
+    assert "graphic" in bounded.style_tags

@@ -13,6 +13,9 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: The local default. File-backed so a fresh clone runs and its wardrobe survives a restart.
+DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./stylelab.db"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -26,6 +29,12 @@ class Settings(BaseSettings):
     #: Availability fallback only. Never triggered by low confidence — a low-confidence
     #: extraction is a signal to surface to the user, not a reason to retry cheaper.
     groq_vision_fallback_model: str = "qwen/qwen3.6-27b"
+    #: Output ceiling for one extraction. Set explicitly rather than left to the provider's
+    #: default, because on these models it is a correctness setting and not only a cost one:
+    #: a reasoning-capable model spends its budget thinking first, so too low a ceiling
+    #: returns an *empty* response rather than a short one. `groq_transport._to_result` names
+    #: that case; `tests/live/test_model_availability.py` holds it to it.
+    groq_vision_max_tokens: int = 2048
 
     # --- Agent crew (docs/AGENT-SYSTEM.md) ---
     agent_framework: Literal["crewai"] = "crewai"
@@ -41,15 +50,56 @@ class Settings(BaseSettings):
     # --- Uploads ---
     max_upload_bytes: int = 10 * 1024 * 1024
     max_images_per_batch: int = 12
+    #: Resolution bounds (docs/SECURITY-PRIVACY.md). The floor rejects thumbnails a vision
+    #: model cannot read; the ceiling rejects decompression bombs whose byte size is small.
+    min_image_edge_px: int = 128
+    max_image_pixels: int = 40_000_000
+    #: The provider gets a downscaled copy, not the stored original: a 4000px photograph of a
+    #: shirt carries no more garment information than a 1024px one, and costs more to send.
+    analysis_max_edge_px: int = 1024
 
     # --- Storage / persistence ---
+    #: Read as configured, which may be blank: `.env.example` ships the key with no value,
+    #: and pydantic-settings faithfully reports that as `""` rather than as absent. Use
+    #: `resolved_database_url` — a blank line in a template means "not configured", and
+    #: treating it as a configured empty URL is how the API refused to boot for a developer
+    #: who had done nothing wrong.
     database_url: str = ""
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     storage_bucket: str = "stylelab-private"
+    #: Where `LocalObjectStore` keeps uploaded images. Private directory, never under a web
+    #: root, and gitignored.
+    storage_root: str = "var/uploads"
+
+    # --- Identity and signed references ---
+    #: HMAC key for session tokens and image URLs. Generated per process when unset, which
+    #: means tokens do not survive a restart — see `app/security/tokens.py`.
+    session_secret: str = ""
+    session_ttl_s: int = 60 * 60 * 24 * 30
+    #: How long an image URL handed to the browser stays valid.
+    image_url_ttl_s: int = 60 * 30
+
+    # --- Web ---
+    #: Browser origin allowed to call this API with credentials.
+    web_origin: str = "http://localhost:3000"
 
     #: Below this, a field is presented as a hedge and offered for correction.
     confidence_floor: float = 0.7
+
+    @property
+    def resolved_database_url(self) -> str:
+        """Where the wardrobe lives, with the local default filled in.
+
+        A **file**, never `:memory:`. The rule `db/session.py` states — no silent fallback to
+        a throwaway database — is about data that vanishes on restart while looking like it
+        worked. A named file in the working directory is neither throwaway nor silent: the
+        dialect is logged at boot, and the file is on disk where anyone can see it.
+
+        Postgres via Supabase lands with deployment in S11, at which point this default stops
+        being reached in any environment that matters.
+        """
+        return self.database_url or DEFAULT_DATABASE_URL
 
 
 @lru_cache

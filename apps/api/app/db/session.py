@@ -1,9 +1,10 @@
 """Engine and session construction.
 
-`build_engine` takes a URL and has no default. `get_engine` reads settings and raises when
-`DATABASE_URL` is unset. Neither falls back to a throwaway in-memory database, for the same
-reason there is no demo mode: a silent downgrade that looks like it worked is worse than a
-loud failure at boot.
+`build_engine` takes a URL and has no default and raises on a blank one. `get_engine` reads
+settings, where an unconfigured `DATABASE_URL` resolves to a local **file**. Neither can
+reach a throwaway in-memory database, for the same reason there is no demo mode: a silent
+downgrade that looks like it worked is worse than a loud failure at boot. A file on disk is
+not that downgrade — the wardrobe is still there tomorrow, and the dialect is logged.
 
 SQLite gets `PRAGMA foreign_keys = ON` on every connection. It is off by default, which
 would quietly turn the composite foreign keys in `app.db.models` — the ones that make
@@ -41,14 +42,22 @@ def build_engine(url: str, *, echo: bool = False) -> Engine:
 
 
 def get_engine(*, echo: bool = False) -> Engine:
-    """The configured engine. Raises if `DATABASE_URL` is absent."""
-    settings = get_settings()
-    if not settings.database_url:
-        raise ConfigurationError(
-            "DATABASE_URL is not set. The API does not fall back to a local database — "
-            "configure it or the wardrobe has nowhere to live."
-        )
-    return build_engine(settings.database_url, echo=echo)
+    """The configured engine, or the local file default.
+
+    `Settings.resolved_database_url` fills in a file-backed SQLite URL when nothing is
+    configured. That is not the fallback this module's docstring refuses: the prohibition is
+    on an **in-memory** database, which vanishes on restart while looking like it worked.
+    A named file does not, and the dialect is logged at boot.
+
+    The distinction earned itself in S6. `.env.example` ships `DATABASE_URL=` with no value,
+    pydantic-settings reports that as `""` rather than as absent, and a blank-means-refuse
+    rule turned a correctly-followed setup instruction into a boot failure telling the
+    developer to configure the thing they had just configured.
+
+    It still raises if the resolved URL is somehow empty, because `build_engine` has no
+    default of its own and nothing should be able to reach it without one.
+    """
+    return build_engine(get_settings().resolved_database_url, echo=echo)
 
 
 def session_factory(engine: Engine) -> sessionmaker[Session]:

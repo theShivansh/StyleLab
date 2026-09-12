@@ -28,6 +28,30 @@ not carry the user's home coordinates into the database.
 - signed URLs never logged, never sent to analytics, never placed in a query string
 - no public product imagery exists any more; there is no "safe to expose" image class
 
+### How the "never in a query string" rule is met (S6)
+
+The token sits in the **path**: `/api/v1/assets/{asset_id}/{token}`. Object stores
+conventionally use a query parameter, and doing the same would have meant arguing with this
+line about what it meant. A path segment satisfies it literally, works in an `<img src>`
+cross-origin with no cookie, and needs no `SameSite` relaxation.
+
+The token is capability-only and short-lived: it names one owner and one asset, it is signed
+for the `image` purpose so a session token cannot be substituted, and it is minted fresh on
+each read of the item.
+
+**"Never logged" is enforced at the logging layer, not by convention.** Uvicorn's access log
+records the request line, which is the path, which is a live credential — so the wardrobe
+screen would write a working link to every photograph in the session into a log file.
+`apps/api/app/logging_setup.py` redacts the token and keeps the asset id; verified against
+the real access log, not only in a unit test.
+
+### EXIF (S6)
+
+Stripped by re-encoding from decoded pixels — Pillow's savers write metadata only when handed
+it explicitly, and nothing does. Orientation is **applied first**, or a portrait photograph
+is stored on its side. Covers GPS, camera model, serial number, timestamps, thumbnails, ICC
+profile, DPI and PNG text chunks. Asserted on the output bytes.
+
 ## Provider exposure
 
 Sending an image to a model provider is a disclosure. Say so in the privacy copy.
@@ -44,6 +68,12 @@ Sending an image to a model provider is a disclosure. Say so in the privacy copy
 
 Never expose LLM provider keys or storage service-role keys. Server-side environment
 variables only. `GROQ_API_KEY` must never reach the browser, and CI must pass with it unset.
+
+`SESSION_SECRET` signs session tokens and image capabilities. Unset, the API generates a
+random per-process key and says so at WARNING: nothing can be forged, and the cost is that
+tokens stop verifying after a restart. Set it in any environment where a session must survive
+a deploy or run on more than one instance. Never log a database URL either — a Postgres URL
+carries a password; log the dialect.
 
 ## API
 

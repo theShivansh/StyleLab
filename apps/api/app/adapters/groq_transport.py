@@ -257,6 +257,17 @@ class GroqChatTransport:
         message = getattr(choices[0], "message", None)
         content = getattr(message, "content", None) if message else None
         if not content:
+            # A reasoning model spends its token budget thinking before it emits anything, so
+            # a budget that is merely *small* produces an empty message with
+            # `finish_reason="length"` rather than a short answer. Worth saying out loud: the
+            # generic version of this error sent S6 looking for a schema problem when the
+            # configured ceiling was the whole story.
+            if getattr(choices[0], "finish_reason", None) == "length":
+                raise ProviderContractError(
+                    "the model reached its token ceiling before producing any output; the "
+                    "configured max_tokens is too low for this model",
+                    model=model,
+                )
             raise ProviderContractError("provider returned an empty message", model=model)
 
         usage = getattr(raw, "usage", None)

@@ -15,6 +15,11 @@ from __future__ import annotations
 import pytest
 from app.adapters.boot import verify_models
 
+#: Enough headroom for a reasoning model to think and then answer. The models configured
+#: here (`openai/gpt-oss-*`) emit nothing at all below roughly a few hundred tokens, so a
+#: ceiling is a correctness setting and not only a cost one.
+VISION_AND_TEXT_HEADROOM = 1024
+
 
 async def test_every_configured_model_resolves(transport, settings):
     """Fails loudly and names the offender.
@@ -57,8 +62,34 @@ async def test_the_provider_answers_at_all(transport, settings):
     result = await transport.complete(
         model=settings.groq_text_model,
         messages=[ChatMessage.text("user", 'Reply with exactly: {"ok": true}')],
-        max_tokens=32,
+        # Not 32, which is what this test asked for until S6 ran it against the real
+        # provider. `openai/gpt-oss-120b` is a reasoning model: it spends its budget
+        # thinking before it emits a token of output, so a small ceiling does not produce a
+        # short answer — it produces an empty message with `finish_reason="length"`. The
+        # canary was failing for a reason that had nothing to do with connectivity.
+        max_tokens=VISION_AND_TEXT_HEADROOM,
     )
 
     assert result.content
     assert result.latency_ms >= 0
+
+
+@pytest.mark.smoke
+async def test_a_token_ceiling_that_is_too_low_says_so(transport, settings):
+    """The other half of the lesson above, kept as a test because the symptom is misleading.
+
+    An empty response reads like a model fault or a schema problem; it is a configuration
+    problem, and the error has to name it. Costs a handful of tokens and buys back the hour
+    this took to diagnose the first time.
+    """
+    from app.adapters.provider_errors import ProviderContractError
+    from app.adapters.transport import ChatMessage
+
+    with pytest.raises(ProviderContractError) as raised:
+        await transport.complete(
+            model=settings.groq_text_model,
+            messages=[ChatMessage.text("user", "Explain the Gauss-Bonnet theorem.")],
+            max_tokens=16,
+        )
+
+    assert "max_tokens" in str(raised.value.message)

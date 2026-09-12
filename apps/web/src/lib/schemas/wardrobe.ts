@@ -55,8 +55,25 @@ export const jobStatusSchema = z.object({
   job_id: z.string(),
   type: z.enum(["analyze_item", "compose_outfit"]),
   status: z.enum(["queued", "processing", "completed", "failed"]),
+  /**
+   * Named work, straight from the API. Rendered verbatim rather than mapped to local copy:
+   * the server knows which step it is actually on, and a client-side guess at the stage is
+   * a spinner with a caption.
+   */
   stage: z.string().nullable(),
   progress: z.number().min(0).max(1).nullable(),
+  /**
+   * Present on failure. Carried so a card can say what went wrong and whether retrying is
+   * worth the user's time — the message was already written honestly server-side, and
+   * inventing a second one here would be worse copy about a failure we know less about.
+   */
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string().nullable(),
+      retryable: z.boolean().default(false),
+    })
+    .optional(),
 });
 
 /** Trend notes without source and date are dropped server-side; the schema enforces it here too. */

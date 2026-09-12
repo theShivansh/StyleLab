@@ -27,6 +27,16 @@ export interface UploadEntry {
   jobId: string | null;
   /** Present when state is "rejected" or "failed" — actionable copy, never a raw error. */
   error: string | null;
+  /** True when the API said retrying is worth the user's time. */
+  retryable: boolean;
+  /**
+   * The named stage the API reported, verbatim. Null until the first poll answers.
+   *
+   * Taken from the server rather than inferred from `state`: the server knows whether it is
+   * reading the photo or checking confidence, and a stage the client guesses at is a
+   * spinner with a caption on it (CLAUDE.md motion rules).
+   */
+  stage: string | null;
   /** Object URL for local preview while the server has nothing to show yet. */
   previewUrl: string | null;
 }

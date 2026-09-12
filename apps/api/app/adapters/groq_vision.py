@@ -29,16 +29,17 @@ ranker below this, not another attempt.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
 
+from app.adapters.analysis import AnalysisAttempt, AnalysisOutcome
 from app.adapters.prompts import VISION_SYSTEM, vision_user_message
 from app.adapters.provider_errors import ProviderError
 from app.adapters.transport import (
     ChatMessage,
     ChatResult,
     ChatTransport,
+    ImageReferenceSource,
     SchemaSpec,
-    SignedUrlSource,
 )
 from app.domain.errors import SchemaInvalidError
 from app.domain.models import GarmentExtraction, GarmentImage
@@ -61,39 +62,6 @@ VISION_SCHEMA = SchemaSpec(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class AnalysisAttempt:
-    """What one call to a model produced, for the `item_extractions` audit trail.
-
-    Written whether or not it was accepted (docs/DATA-MODEL.md): an audit trail that keeps
-    only the successes cannot show that anything was ever caught.
-    """
-
-    model: str
-    raw_output: str
-    schema_valid: bool
-    latency_ms: int
-    rejected_reason: str | None = None
-    request_id: str | None = None
-    used_fallback: bool = False
-
-
-@dataclass
-class AnalysisOutcome:
-    """The extraction plus every attempt it took to get there."""
-
-    extraction: GarmentExtraction
-    attempts: list[AnalysisAttempt]
-
-    @property
-    def model(self) -> str:
-        return self.attempts[-1].model
-
-    @property
-    def used_fallback(self) -> bool:
-        return self.attempts[-1].used_fallback
-
-
 class GroqWardrobeAnalyzer:
     """`WardrobeAnalyzer` over a `ChatTransport`.
 
@@ -108,7 +76,7 @@ class GroqWardrobeAnalyzer:
         *,
         model: str,
         fallback_model: str | None = None,
-        urls: SignedUrlSource | None = None,
+        urls: ImageReferenceSource | None = None,
         timeout_s: float | None = None,
         max_tokens: int | None = None,
     ) -> None:
@@ -123,14 +91,28 @@ class GroqWardrobeAnalyzer:
         """The `WardrobeAnalyzer` Protocol method."""
         return (await self.analyze_with_audit(image)).extraction
 
-    async def analyze_with_audit(self, image: GarmentImage) -> AnalysisOutcome:
+    async def analyze_with_audit(
+        self, image: GarmentImage, *, on_attempt: Callable[[AnalysisAttempt], None] | None = None
+    ) -> AnalysisOutcome:
         """Same work, plus the attempt records the audit table wants.
 
         A separate method rather than a wider Protocol: the domain has no use for provider
         telemetry, and putting `model` on the interface would leak a vendor concept into it.
+
+        `on_attempt` fires as each attempt completes, and it is the only way the caller sees
+        the attempts on a **failing** run — the return value does not exist when this method
+        raises. docs/DATA-MODEL.md wants `item_extractions` written for rejections too, and
+        an audit trail that is only reachable through a successful return is an audit trail
+        of successes. Called synchronously and expected not to raise; the pipeline appends
+        to a list and persists them in a `finally`.
         """
         messages = await self._messages(image)
         attempts: list[AnalysisAttempt] = []
+
+        def record(attempt: AnalysisAttempt) -> None:
+            attempts.append(attempt)
+            if on_attempt is not None:
+                on_attempt(attempt)
 
         # The chain is availability only. Nothing about the *content* of a response can put
         # us on the next model.
@@ -142,9 +124,11 @@ class GroqWardrobeAnalyzer:
 
         for model, is_fallback in chain:
             try:
-                extraction, model_attempts = await self._ask(model, messages, is_fallback)
+                extraction = await self._ask(model, messages, is_fallback, record)
             except ProviderError as error:
-                attempts.append(
+                # No response arrived, so there is nothing to quote. The attempt is still
+                # recorded: "the provider refused" is evidence too.
+                record(
                     AnalysisAttempt(
                         model=model,
                         raw_output="",
@@ -166,20 +150,15 @@ class GroqWardrobeAnalyzer:
                 # The model answered but would not follow the schema. That is not an
                 # availability problem, so the fallback is not the answer — the caller
                 # degrades instead.
-                attempts.append(
-                    AnalysisAttempt(
-                        model=model,
-                        raw_output="",
-                        schema_valid=False,
-                        latency_ms=0,
-                        rejected_reason="schema_invalid",
-                        used_fallback=is_fallback,
-                    )
-                )
+                #
+                # No attempt is recorded here. `_ask` already recorded one per response,
+                # each carrying the raw output that failed to parse, which is the single
+                # most useful row in the audit table. The earlier version of this branch
+                # appended a synthetic attempt with `raw_output=""` and threw the real ones
+                # away — an audit trail that recorded "something was rejected" and not what.
                 logger.warning("vision output failed the schema", extra={"reason": error.reason})
                 raise
 
-            attempts.extend(model_attempts)
             return AnalysisOutcome(extraction=extraction, attempts=attempts)
 
         raise last_provider_error or ProviderError("no vision model was reachable")
@@ -187,11 +166,17 @@ class GroqWardrobeAnalyzer:
     # --- internals ---------------------------------------------------------------------
 
     async def _ask(
-        self, model: str, messages: list[ChatMessage], is_fallback: bool
-    ) -> tuple[GarmentExtraction, list[AnalysisAttempt]]:
-        """One model, with a bounded re-ask when it ignores the schema."""
-        attempts: list[AnalysisAttempt] = []
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        is_fallback: bool,
+        record: Callable[[AnalysisAttempt], None],
+    ) -> GarmentExtraction:
+        """One model, with a bounded re-ask when it ignores the schema.
 
+        Reports each attempt through `record` as it happens rather than returning them,
+        so an attempt that ends in a raise is already accounted for.
+        """
         for attempt in range(SCHEMA_RETRIES + 1):
             result = await self._transport.complete(
                 model=model,
@@ -203,16 +188,16 @@ class GroqWardrobeAnalyzer:
             try:
                 extraction = parse_extraction(result.content)
             except SchemaInvalidError as error:
-                attempts.append(self._attempt(result, model, is_fallback, error.reason))
+                record(self._attempt(result, model, is_fallback, error.reason))
                 if attempt == SCHEMA_RETRIES:
                     raise
                 logger.info("re-asking the vision model for schema-valid output")
                 continue
 
-            attempts.append(self._attempt(result, model, is_fallback, None))
+            record(self._attempt(result, model, is_fallback, None))
             # Deliberately no inspection of extraction.field_confidence here. See the module
             # docstring: there is no path from a confidence score to a model choice.
-            return extraction, attempts
+            return extraction
 
         raise SchemaInvalidError("extraction: no schema-valid response")
 
@@ -256,7 +241,7 @@ class GroqWardrobeAnalyzer:
             raise ProviderError(
                 "no signed-url source is configured, so no image can be sent for analysis"
             )
-        return await self._urls.signed_url(image.storage_key, ttl_s=IMAGE_URL_TTL_S)
+        return await self._urls.provider_url(image.storage_key, ttl_s=IMAGE_URL_TTL_S)
 
 
 __all__ = [

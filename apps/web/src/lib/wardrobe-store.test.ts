@@ -30,6 +30,8 @@ function upload(over: Partial<UploadEntry> = {}): UploadEntry {
     itemId: null,
     jobId: null,
     error: null,
+    retryable: false,
+    stage: null,
     previewUrl: null,
     ...over,
   };

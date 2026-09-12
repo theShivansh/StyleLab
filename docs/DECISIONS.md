@@ -1023,3 +1023,281 @@ duplicate existed.
 The underlying constraint is unchanged: the project's own `Read(./.env.*)` deny rule still
 applies, those files remain uninspectable from here, and they are staged explicitly rather
 than by `git add -A`.
+
+---
+
+# S6 — Upload + async analysis pipeline (2026-09-12)
+
+## The live suite found two bugs a mock could not
+
+The first real run of `tests/live` against a provisioned key failed three ways. One was a
+test that was wrong. Two were product bugs that had been green in every offline suite since
+S5, and both were invisible for the same structural reason: **`MockGroqProvider` returns
+scripted content and never validates the schema it was handed.** The transport seam is still
+the right design — it is what makes the real prompt, parser, retry and fallback testable for
+free — but it cannot check the one thing only the provider can.
+
+**1. Strict Structured Outputs requires every property in `required`.** Our schemas derive
+`required` from Pydantic, and every field of `GarmentExtraction` has a default, so `required`
+was absent entirely. Groq answered 400 naming all thirteen properties. Fixed by
+`_require_all_properties`, which lists every property of every object at every depth;
+optionality is carried by the nullable type Pydantic already emits. Strict mode cannot
+express an optional key, so this is not a workaround — it is the contract.
+
+**2. `field_confidence` was specified as an object permitted to hold nothing.** This is the
+more serious of the two. `dict[str, float]` is the right domain type and an impossible
+strict schema: strict mode needs `additionalProperties: false` on every object, and a
+free-form map closed that way admits no keys at all. So the provider was being instructed,
+in a schema it obeys, that per-field confidence must be **empty** — and per-field confidence
+is the honesty signal the entire extraction screen is built on. Every offline test passed
+because the fixtures supplied scores the model was forbidden from sending.
+
+Fixed by enumerating the keys. Which keys is itself a decision: **exactly the fields the
+user can correct** (`CORRECTABLE_FIELDS`). One list, one meaning — we can say we are unsure
+about precisely the things you can settle. A hedge on a field with no correction path is a
+dead end; a correctable field with no confidence never gets hedged and so never prompts.
+Scores are nullable, because a model that did not assess a field should say so rather than
+invent a number, and `null` is translated to the key's absence at the boundary.
+
+Both now have regression tests asserted structurally rather than by re-listing the fields —
+a `required` array written out in a test would be a third copy of the contract, which is the
+problem the derivation exists to solve.
+
+**The lesson recorded, not just the fix:** the offline suite proves our logic, and only a
+live call proves the provider agrees. `tests/live` is not redundant with `tests/ai`; it
+covers the class of failure where our JSON Schema is valid and the provider refuses it. It
+paid for itself on its first run.
+
+## A reasoning model with a small token ceiling returns nothing, not less
+
+`openai/gpt-oss-120b` spends its budget thinking before it emits output, so
+`max_completion_tokens=32` produces an **empty** message with `finish_reason="length"` — not
+a short answer. The live connectivity canary had asked for 32 since S5 and was failing for a
+reason with nothing to do with connectivity.
+
+Two changes. `_to_result` now names that case instead of reporting a generic "empty
+message", because the generic version sent this session looking for a schema problem when
+the configured ceiling was the whole story. And `groq_vision_max_tokens` is now set
+explicitly rather than left to a provider default: on these models a ceiling is a
+**correctness** setting, not only a cost one.
+
+## Identity: a signed bearer token, and why not a header
+
+Every wardrobe route needs a `user_id`, and where it comes from decides whether the
+ownership boundary is real. An `X-User-Id` header would have been three lines and would have
+handed every wardrobe to anyone who could type somebody else's id — and would have made
+every ownership test in S4 vacuous, since a scoped query is worth nothing if the requester
+picks the scope.
+
+So `POST /session` mints an HMAC-signed token and the server reads the subject out of its
+own signature. A caller can hold a token or not; it cannot choose what is inside one. This
+is **not** authentication (B15) — it is an identity seam of the right shape, and Supabase
+auth in S11 replaces the minting and nothing else.
+
+A bearer header rather than a cookie because the browser calls this API cross-origin in
+development, and a cookie that works there needs `SameSite=None; Secure`, which needs HTTPS,
+which a local run does not have. Same forgery resistance, no coupling to the deployment.
+
+### The signing key may be generated at startup
+
+`SESSION_SECRET` unset means a random per-process key, logged at WARNING. The safe
+direction: nothing can be forged, and the only cost is that tokens stop verifying after a
+restart. A hardcoded fallback would make every deployment forgeable by anyone who read the
+file; refusing to boot would make a fresh clone unusable for a reason unrelated to the
+product.
+
+It is not the silent fallback this project forbids elsewhere. That rule is about product
+truth — never serving fabricated AI output (Case 25). Nothing here affects what the model
+said or whose wardrobe was read; the degradation is session lifetime, and it is announced.
+
+This has a demo consequence, found while verifying in the browser and now recorded against
+B6: without the secret set, a pre-seeded demo wardrobe becomes unreachable the moment the
+process restarts.
+
+## Image references: `SignedUrlSource` renamed to `ImageReferenceSource`
+
+S5 named the Protocol for the answer it assumed — a signed URL. S6 found the assumption
+wrong in the case that matters most: a local deployment's storage is a private directory,
+its API is on `localhost`, and Groq's servers can fetch neither. The only reference that
+works there is an inlined `data:` URL, and S5's own live test had already been forced to
+implement `signed_url` returning one.
+
+Renamed for what it returns. `InlineImageSource` is the local implementation and also does
+the downscaling, because the provider payload ceiling is a property of sending an image to a
+provider — putting it here means no future caller has to remember. `SignedUrlImageSource`
+exists and raises, so that inlining looks like the local choice rather than the only one.
+
+## The browser's image URL puts its token in the path
+
+docs/SECURITY-PRIVACY.md: signed URLs are "never logged, never sent to analytics, never
+placed in a query string". Object stores conventionally use a query parameter, which would
+have meant arguing with the spec about what the sentence meant.
+
+It does not have to. `/assets/{asset_id}/{token}` satisfies the rule literally, works in an
+`<img src>` cross-origin with no cookie, and needs no `SameSite` relaxation.
+
+Two further decisions fell out of it:
+
+* **The owner is inside the signed subject**, not just the asset. The route therefore still
+  reads through the ownership-scoped query rather than loading an asset by primary key —
+  without it, this would have been the one place in the application that loads an owned row
+  with no `user_id`, which is exactly the bypass `test_query_scoping.py` forbids.
+* **The purpose is signed into every token.** One key signs sessions and image
+  capabilities; without the purpose, an image token — the one that travels in a URL and is
+  therefore most likely to be obtained — would be a valid session token for its subject.
+
+And the rule about logging is enforced at the logging layer (`app/logging_setup.py`) rather
+than by asking callers to remember. Uvicorn's access log records the request line, the
+request line is the path, and the path is a live credential; the wardrobe screen would have
+written a working link to every photograph in the session into a log file. Verified against
+the real access log, not only in a unit test.
+
+## Where the retries are, and why there are not more
+
+Prompt 05 asks for "error classification and bounded retry". Both exist and neither is in
+the pipeline layer: transient provider failures are retried in the transport (three attempts,
+jittered backoff) and schema failures are re-asked once by the analyzer. Adding a third
+would multiply — three transport attempts inside two analyzer attempts inside two job
+attempts is twelve calls for one photograph of a shirt, most of them into a rate limit that
+is already refusing us.
+
+What this layer adds instead is honest classification and a stop. The retry belongs to the
+person looking at the card.
+
+`retryable` answers "would doing this again plausibly work?", not "is the system unwell". A
+timeout, yes. A model id that no longer resolves, no — that is a deployment problem, and a
+spinning retry button is a lie about it.
+
+## The checksum cache is scoped to one user, and that is the whole story
+
+A re-uploaded photograph costs nothing: `upload` finds a live asset with the same checksum
+and hands back the existing item with a job that is already `completed`, so the client's
+existing poller resolves it on the first tick with no special case. A third upload status
+meaning "already done" would have added a branch to every card in the UI to save one round
+trip.
+
+The per-user scope is not an optimisation detail. A global checksum index would be a
+deduplication table across wardrobes: upload a photograph somebody else had uploaded and you
+would be handed their asset, their extraction and their garment. Two users who own the same
+jacket get two analyses, and that is the correct answer rather than waste.
+
+The cache is also honest about its limits. The checksum is over normalised pixels, so it is
+invariant to the container and to metadata — the same photograph off two phones is one image
+— but **not** to lossy re-compression. A phone that re-encoded the picture on the way out
+produced different pixels and gets a different checksum. Asserted as a test so nobody reads
+the cache as content addressing.
+
+## Image ingest: two ceilings, and orientation before stripping
+
+The byte ceiling and the pixel ceiling catch different attacks and neither subsumes the
+other: a flat 12000x12000 PNG compresses to a few hundred kilobytes and decodes to 144
+megapixels, which no byte limit can see; a 200MB file is refused before it is decoded at all.
+The format is sniffed from magic bytes, because the declared `Content-Type` is a claim by
+the uploader.
+
+**EXIF orientation is applied before the metadata is dropped.** A phone writes portrait
+photographs as landscape pixels plus an orientation tag; strip the tag without rotating the
+pixels and every portrait garment in the wardrobe lies on its side — including in the image
+sent to the vision model, which then reports the shoulders of a shirt as its hem.
+
+### What actually strips the metadata, corrected by a mutation
+
+The code claimed `clean.info = {}` was the safeguard. A mutation run says otherwise: remove
+the line and every metadata assertion still passes, because Pillow 11.3's savers write EXIF,
+an ICC profile or a DPI only when handed one explicitly. **Re-encoding from decoded pixels
+is the whole mechanism.** The line is kept as belt-and-braces because that has not always
+been true of Pillow, but the comment claiming it was would have sent the next reader to the
+wrong place.
+
+The mutation the tests *do* catch is the realistic one: adding `exif=`/`icc_profile=` to
+those `save()` calls to make stored photographs render more faithfully. That is a
+reasonable-sounding change which puts a user's GPS coordinates back in the database, and it
+turns four tests red — including the checksum-invariance test, because metadata leaking back
+in also defeats the cache.
+
+## Text read off a garment is bounded, and not by the adapter
+
+Case 07 is usually read as a prompt problem. The prompt rules and the SQL scope are the first
+two layers, and both were in place. The third layer is the one that survives them: even a
+perfectly obedient model puts the words it read into the field it was asked to fill — a
+slogan legitimately belongs in `pattern` or `style_tags` — so the wardrobe stores
+attacker-influenced strings which are later interpolated into the **advice** prompt, where a
+downstream model with no memory of their origin reads them.
+
+`app/domain/hygiene.py` makes the channel too small to carry a payload and too plain to carry
+markup: per-field length ceilings, bounded list lengths, no control characters. It does not
+try to detect intent. Fields are truncated rather than dropped, because a truncated colour is
+still the user's garment and still correctable.
+
+Called by the pipeline and **deliberately not by the adapter** — same rule as
+`GroqOutfitAdvisor` not filtering unowned ids. A check inside the adapter looks done and
+leaves the seam that matters untested; the adapter's job is to report faithfully what the
+model said.
+
+## The audit trail had to be reachable from the failure path
+
+docs/DATA-MODEL.md wants `item_extractions` written for rejections too. It was not possible:
+`analyze_with_audit` returned its attempts, and a failing analysis raises and has no return
+value. The rejected attempts — the rows carrying the raw text that would not parse, which are
+the most useful rows in the table — were unreachable, and the code path that appended a
+synthetic attempt with `raw_output=""` threw the real ones away.
+
+Fixed with an `on_attempt` callback that fires as each attempt completes, and a `finally`
+that persists whatever it collected. An audit trail reachable only through a successful
+return is an audit trail of successes.
+
+## Soft deletion, and the read that was not excluding it
+
+`delete_with_cascade` marks the item, marks the asset, and sets every outfit referencing it
+to `incomplete` — one call, because the three writes have to agree, and `incomplete` rather
+than discarded because the user composed that look and deserves to be told which piece is
+missing (Case 14).
+
+Building the API read on S4's `_row` exposed that it did not filter `deleted_at`. A deleted
+garment kept answering 200, `DELETE` was idempotent-by-accident, and a correction or a
+re-analysis could have been applied to a garment the user had thrown away. Fixed in `_row`
+rather than at each call site. "Reversible by support" is not "still present in the product".
+
+What is still true: the bytes stay on disk (B16). The file stops being served and the rows
+are marked, but nothing unlinks it yet, so "delete my photographs" is not fully true at the
+filesystem level until the retention timer lands in S11.
+
+## `DATABASE_URL=` with no value means "not configured"
+
+`.env.example` ships the key blank and pydantic-settings faithfully reports that as `""`
+rather than as absent. S4's rule — refuse to boot rather than fall back — turned a correctly
+followed setup instruction into a boot failure telling the developer to configure the thing
+they had just configured.
+
+Blank now resolves to a file-backed SQLite database in the working directory, gitignored,
+with the **dialect** logged at boot (never the URL — a Postgres URL carries a password). That
+is not the fallback the rule refuses: the prohibition is on an *in-memory* database, which
+vanishes on restart while looking like it worked. A named file does not.
+
+## The web app renders the photograph with a plain `<img>`
+
+`next/image` would route every wardrobe photograph through the Next server's optimiser,
+which writes them to an on-disk cache outside the private store — a second, unsigned,
+unexpiring copy of the most sensitive asset in the product, and one the deletion flow knows
+nothing about. Incompatible with private storage and short-lived signed access. The lint rule
+is silenced with that reason inline, and the bandwidth argument it makes does not apply:
+ingest already downscales.
+
+## Mutations run
+
+| Mutation | Result |
+|---|---|
+| Keep the EXIF block when re-encoding | **missed** — the line is not load-bearing under Pillow 11.3; see above |
+| Write the metadata back explicitly (`exif=`, `icc_profile=`) | caught, 4 tests |
+| Skip applying EXIF orientation | caught, 1 test |
+| Trust the declared MIME type instead of the bytes | caught, 1 test |
+| Make the checksum cache global instead of per-user | caught, 1 test |
+| Let a soft-deleted item keep answering reads | caught, 2 tests |
+| Write the audit trail only when the analysis succeeded | caught, 3 tests across 2 files |
+| Trust the asset id in the path rather than the signed one | caught, 1 test |
+| Drop the image token's purpose check | caught, 1 test |
+
+The missed one is recorded rather than quietly re-scoped. It is not a coverage hole: there
+is no mutation of that line which changes the output, because the line has no effect on this
+version of Pillow. The property it was supposed to protect is guarded by the output-byte
+assertions, which the realistic mutation does turn red.

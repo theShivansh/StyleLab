@@ -85,8 +85,20 @@ Implementations:
 - `CorpusTrendSource` (default, `data/trends/`) · `WebTrendSource` (opt-in)
 - stub implementations in `tests/ai/` — test doubles only; the running app never reaches them
 
-The domain layer must not be able to tell which implementation it holds. Two greps,
-both returning nothing outside `adapters/`: `git grep -i groq` and `git grep -i crewai`.
+The domain layer must not be able to tell which implementation it holds.
+
+This used to be stated as two greps coming back empty outside `adapters/`. They never did
+and never could: `Settings` has to call its fields `groq_api_key` and `groq_text_model`
+because they map to `GROQ_*` environment variables, and a docstring explaining why Groq
+lives behind an adapter is not coupling. Corrected in S5; recorded here in S6 because this
+file was still asserting it.
+
+What is enforced, by `apps/api/tests/test_adapter_boundary.py` parsing with `ast` so prose
+does not trip it:
+
+1. no vendor module imported or referenced outside `app/adapters/`
+2. no model **id** written as a literal outside `app/config.py`
+3. `app/domain/` never imports `app.adapters` — the dependency runs one way
 
 ## 4. Image input
 
@@ -96,6 +108,24 @@ both returning nothing outside `adapters/`: `git grep -i groq` and `git grep -i 
 - pass a reference, never raw bytes, through domain code
 - never log image content
 - key the analysis cache on checksum so re-uploading the same photo costs nothing
+
+Implemented in S6 (`app/services/images.py`, `app/services/storage.py`). Four details the
+list above does not make obvious, each with a reason:
+
+- **Two ceilings, not one.** A byte limit cannot see a 12000x12000 PNG that compresses to a
+  few hundred kilobytes; a pixel limit cannot see a 200MB file. The pixel check reads the
+  header, before the image is decoded.
+- **The format is sniffed from magic bytes.** The declared `Content-Type` is a claim by the
+  uploader and is used only to write a clearer refusal.
+- **EXIF orientation is applied before the block is dropped**, or every portrait photograph
+  is stored on its side — including the copy sent to the vision model.
+- **"A short-lived signed URL" is not always what a provider can fetch.** A local
+  deployment's storage is a private directory and its API is on `localhost`, so the
+  reference is an inlined, downscaled `data:` URL. The Protocol is named
+  `ImageReferenceSource` for what it returns rather than for one implementation of it.
+
+The cache is scoped to one user. A global checksum index would deduplicate across wardrobes
+and hand one user another's extraction.
 
 ## 5. Orchestration — upload to wardrobe
 
@@ -111,6 +141,15 @@ POST /wardrobe/items (n images)
 ```
 
 One bad image fails one job. It must never fail the batch.
+
+Implemented in S6. The runner is in-process (blocker B14) and the seam is `submit`, which
+takes a factory and returns nothing — a durable queue replaces it without touching the
+pipeline. What is not deferred is the property that would be expensive to retrofit: the
+upload route holds no reference to an extraction and cannot wait for one.
+
+Stages are named work, from `app/services/jobs.py`, and `progress` is derived from the stage
+so the two cannot disagree. One job per image, never one per batch: a batch-level job has
+one status, and one status means one spinner over eight photographs.
 
 ## 6. Orchestration — wardrobe to outfit
 
