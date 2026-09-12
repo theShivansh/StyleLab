@@ -35,12 +35,30 @@ def stubs():
 
 
 @pytest.fixture
-def client():
+def client(stubs):
+    """A TestClient over an app wired to the mock provider.
+
+    Importantly this still runs the real boot checks — `create_app` takes the transport, so
+    `verify_models` executes against a scripted model list rather than being skipped. The
+    first version of this fixture used the module-level `app`, whose lifespan built the real
+    Groq transport and made a live `models.list()` call with the fake key: the suite passed
+    (the failure is tolerated by design) but every run took ten seconds and needed a network.
+    A unit suite that silently depends on the internet is a unit suite that fails on a train.
+    """
     from fastapi.testclient import TestClient
 
-    from app.main import app
+    from app.config import get_settings
+    from app.main import create_app
 
-    with TestClient(app) as test_client:
+    settings = get_settings()
+    transport = stubs.MockGroqProvider(
+        models={
+            settings.groq_text_model,
+            settings.groq_vision_model,
+            settings.groq_vision_fallback_model,
+        }
+    )
+    with TestClient(create_app(transport=transport)) as test_client:
         yield test_client
 
 

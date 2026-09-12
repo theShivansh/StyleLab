@@ -219,8 +219,12 @@ catalogue and ownership validation still run after it, always.
 Outfit advice comes from a crew of specialist agents behind the `OutfitAdvisor`
 interface. Roles, dataflow, latency budget and output contract: `docs/AGENT-SYSTEM.md`.
 
-- Domain code never imports the agent framework. `git grep -i crewai` outside
-  `adapters/` returns nothing, same rule as Groq.
+- Domain code never imports the agent framework, same rule as Groq. Enforced by
+  `apps/api/tests/test_adapter_boundary.py`, which parses with `ast` rather than grepping:
+  no vendor import or symbol outside `adapters/`, no model id literal outside the adapter
+  config, and `domain/` never imports `adapters/`. A plain `git grep -i crewai` will match
+  settings field names and docstring prose — those are not coupling, and chasing the grep to
+  zero would mean renaming settings away from their environment variables.
 - **Every agent's output is untrusted, including the Editor's.** Schema → business →
   ownership validation runs on the merged response regardless of what any agent asserted.
   An agent asked to critique is not thereby trusted.

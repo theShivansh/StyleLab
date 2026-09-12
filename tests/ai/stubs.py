@@ -8,15 +8,27 @@ grounding path with no API key and no network.
 module; `apps/api/tests/test_query_scoping.py` enforces that. A running STYLELAB always
 performs real inference (docs/AI-EVAL-CASES.md Case 25).
 
-The important one is `ScriptedAdvisor`. It returns whatever a test hands it — including a
-well-formed, confident response naming an item belonging to somebody else. That is the only
-way to prove Case 11's second half: that ownership re-validation, not the prompt, is what
-stops a forged response.
+Two levels of double live here, and the difference matters:
+
+* **`MockGroqProvider`** replaces the *transport*. The real `GroqWardrobeAnalyzer` and
+  `GroqOutfitAdvisor` sit on top of it and run their real prompt construction, real schema
+  parsing, real retry and real fallback logic. This is the one that tests the adapter.
+* **`ScriptedAdvisor` / `ScriptedAnalyzer`** replace the *adapter*. They test everything
+  above the adapter — the composition service and the domain rules — without caring how a
+  response was produced.
+
+`ScriptedAdvisor` returns whatever a test hands it, including a well-formed, confident
+response naming an item belonging to somebody else. That is the only way to prove Case 11's
+second half: that ownership re-validation, not the prompt, is what stops a forged response.
 """
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
+from typing import Any
 
 from app.domain.models import (
     AdviceRequest,
@@ -162,12 +174,176 @@ class UnavailableTrendSource:
         raise RuntimeError("trend corpus unavailable")
 
 
+# --- provider fixtures -------------------------------------------------------------------
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "groq"
+
+
+def fixture(name: str) -> str:
+    """One recorded provider response, exactly as it would arrive.
+
+    Returns the raw completion text, not a parsed object: `.json` fixtures are re-serialised
+    so the adapter does its own `json.loads`, and `.txt` fixtures are returned untouched so a
+    truncated or prose response stays truncated. Validation is what is under test; handing
+    the test a parsed dict would skip it.
+    """
+    path = FIXTURES / name
+    if not path.exists():
+        available = ", ".join(sorted(p.name for p in FIXTURES.iterdir()))
+        raise FileNotFoundError(f"no fixture {name}; have: {available}")
+
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".json":
+        return json.dumps(json.loads(text))
+    return text
+
+
+# --- transport double --------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedCall:
+    """One call the adapter made, for asserting on what it actually sent."""
+
+    model: str
+    messages: list[Any]
+    schema_name: str | None
+    timeout_s: float | None
+    max_tokens: int | None
+
+    @property
+    def text(self) -> str:
+        """Every text part of every message, joined. What the model would read."""
+        parts: list[str] = []
+        for message in self.messages:
+            for part in message.content:
+                if part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+        return "\n".join(parts)
+
+    @property
+    def image_urls(self) -> list[str]:
+        return [
+            part["url"]
+            for message in self.messages
+            for part in message.content
+            if part.get("type") == "image_url"
+        ]
+
+
+@dataclass
+class MockGroqProvider:
+    """A `ChatTransport` that returns scripted content, or raises.
+
+    Scripting is per model so the availability fallback chain can be exercised properly:
+    give the primary model an exception and the fallback a payload, and the adapter's own
+    logic decides whether to move on. A mock that ignored the model argument could not tell
+    a correct fallback from a wrong one.
+
+    `script` entries may be:
+      * a `str` — returned as the completion content
+      * an `Exception` — raised
+      * a `list` of either — consumed in order, the last entry repeating
+
+    `calls` records every request, which is how the prompt-contract tests assert that no
+    model id, and no user id, ever reached a prompt.
+    """
+
+    script: dict[str, Any] = field(default_factory=dict)
+    default: Any = None
+    models: set[str] = field(default_factory=set)
+    latency_ms: int = 11
+    #: Raised by `available_models()`. Used for the boot check's degraded path.
+    list_error: Exception | None = None
+    calls: list[RecordedCall] = field(default_factory=list)
+
+    @classmethod
+    def returning(cls, content: str, *, models: set[str] | None = None) -> MockGroqProvider:
+        """Answers every model with the same content."""
+        return cls(default=content, models=models or set())
+
+    async def complete(
+        self,
+        *,
+        model: str,
+        messages: list[Any],
+        schema: Any | None = None,
+        timeout_s: float | None = None,
+        max_tokens: int | None = None,
+    ) -> Any:
+        from app.adapters.transport import ChatResult
+
+        self.calls.append(
+            RecordedCall(
+                model=model,
+                messages=list(messages),
+                schema_name=getattr(schema, "name", None),
+                timeout_s=timeout_s,
+                max_tokens=max_tokens,
+            )
+        )
+
+        entry = self.script.get(model, self.default)
+        if isinstance(entry, list):
+            if not entry:
+                raise AssertionError(f"mock script for {model} is exhausted")
+            value = entry.pop(0) if len(entry) > 1 else entry[0]
+        else:
+            value = entry
+
+        if isinstance(value, Exception):
+            raise value
+        if value is None:
+            raise AssertionError(f"mock has no scripted response for model {model}")
+
+        return ChatResult(
+            content=value,
+            model=model,
+            latency_ms=self.latency_ms,
+            request_id=f"req_mock_{len(self.calls)}",
+            prompt_tokens=120,
+            completion_tokens=180,
+        )
+
+    async def available_models(self) -> set[str]:
+        if self.list_error is not None:
+            raise self.list_error
+        return set(self.models)
+
+    # --- assertions helpers ------------------------------------------------------------
+
+    @property
+    def models_called(self) -> list[str]:
+        return [call.model for call in self.calls]
+
+
+class FakeSignedUrls:
+    """A `SignedUrlSource` that hands back an opaque, obviously-fake URL.
+
+    Records what it was asked for so a test can assert the analyzer passed a storage key
+    and never raw bytes.
+    """
+
+    def __init__(self, base: str = "https://storage.example.test/signed") -> None:
+        self.base = base
+        self.requested: list[tuple[str, int]] = []
+
+    async def signed_url(self, storage_key: str, *, ttl_s: int = 300) -> str:
+        self.requested.append((storage_key, ttl_s))
+        return f"{self.base}/{storage_key}?exp={ttl_s}"
+
+
 __all__ = [
+    "FIXTURES",
     "FailingAdvisor",
+    "FakeSignedUrls",
+    "MockGroqProvider",
+    "RecordedCall",
     "ScriptedAdvisor",
     "ScriptedAnalyzer",
     "StaticTrendSource",
     "UnavailableTrendSource",
+    "fixture",
     "garment",
     "trend_note",
 ]

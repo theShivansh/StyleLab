@@ -1,0 +1,22 @@
+{
+  "category": "top",
+  "subcategory": null,
+  "color_primary": "black",
+  "color_secondary": null,
+  "pattern": null,
+  "material_guess": "wool blend",
+  "fit": null,
+  "formality": null,
+  "season_tags": [],
+  "occasion_tags": [],
+  "style_tags": [],
+  "field_confidence": {
+    "category": 0.44,
+    "color_primary": 0.31,
+    "material_guess": 0.18
+  },
+  "quality_warnings": [
+    "low_light",
+    "garment_partially_cropped"
+  ]
+}

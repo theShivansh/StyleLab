@@ -730,3 +730,296 @@ Noted for the record: `ruff format` is **not** part of the gate — CI runs `ruf
 and `app/config.py` from S1 has never been format-clean. Reformatting was not adopted in S4
 because it would reflow the deliberately column-aligned lookup tables in `scoring.py` into
 sixty single-entry lines, which is worse to read for no correctness gain.
+
+---
+
+### 2026-09-12 — The mock replaces the transport, not the adapter
+
+Context:
+prompts/12 asks for a `MockGroqProvider` and sets the acceptance criterion "the domain layer
+cannot tell whether it is using Groq or the mock adapter". The obvious reading is a second
+`WardrobeAnalyzer` implementation.
+
+Decision:
+A narrow `ChatTransport` Protocol (`app/adapters/transport.py`) sits *below* the adapters:
+one method for a schema-constrained completion, one for a model list. `MockGroqProvider`
+implements that, so the real `GroqWardrobeAnalyzer` and `GroqOutfitAdvisor` run on top of it
+with their real prompt construction, real parsing, real retry and real fallback logic.
+
+Alternatives:
+A mock adapter. Rejected — it would assert that a stub returns what the stub was told to
+return. Every interesting behaviour in this phase (the fallback chain, the schema re-ask,
+the error taxonomy) lives in the adapter, which a mock adapter replaces wholesale.
+
+Why:
+It also makes the acceptance criterion *true* rather than restated: both live adapters and
+both test doubles satisfy the same Protocols because the substitution happens underneath
+them. Only `groq_transport.py` imports the SDK, and the ast-based boundary test enforces it.
+
+---
+
+### 2026-09-12 — There is no code path from a confidence score to a model choice
+
+Context:
+`docs/AI-SYSTEM.md` and Case 24 forbid using the vision fallback for a low-confidence
+extraction. Enforcing that with a rule means trusting every future editor to have read it.
+
+Decision:
+`GroqWardrobeAnalyzer` never reads `field_confidence`. The fallback chain is driven purely
+by `ProviderError.use_fallback_model`, which is set on the exception type — timeout, rate
+limit, deprecated model id — and never derived from a response body.
+
+Why:
+"We do not do X" is weaker than "there is nowhere to do X from". Writing the forbidden
+behaviour is a deliberate edit to add a confidence lookup that does not otherwise exist,
+rather than a plausible tweak to an existing branch.
+
+Verified by mutation: adding that lookup — `if max(scores) < 0.7: continue` — turned
+`test_a_low_confidence_extraction_never_triggers_the_fallback` red. Reverted.
+
+This is the rule most likely to be broken by somebody trying to be helpful, which is why it
+gets a mutation rather than just a test.
+
+---
+
+### 2026-09-12 — A schema failure retries; it does not change model
+
+Context:
+Two failure modes look similar from the call site: the provider could not answer, and the
+model answered but ignored the output schema.
+
+Decision:
+The first moves down the availability chain. The second gets **one** re-ask on the same
+model and then raises, leaving the caller to degrade to the deterministic ranker.
+
+Why:
+Changing model to fix a schema failure treats an instruction-following problem as an
+availability problem. And a second re-ask is unlikely to help — Case 06 puts the
+deterministic path below this, not a third attempt. `ProviderContractError` is a third,
+separate case: a 200 with no choices means the model never answered, so sending it down the
+re-ask path could not help either.
+
+---
+
+### 2026-09-12 — The adapter does not filter unowned ids, deliberately
+
+Context:
+`GroqOutfitAdvisor` holds the candidate list. Dropping any id the model invented would be
+three lines and would look like good hygiene.
+
+Decision:
+It does not. It parses and schema-validates, and hands back whatever the model named.
+`CompositionService` re-validates against the retrieved set afterwards.
+`test_the_advisor_does_not_filter_an_unowned_id_itself` asserts the adapter lets it through.
+
+Why:
+An adapter that tidies up after the model hides how often the model needs tidying up after.
+Concretely, the mutation that adds the filter makes the ownership rejection *disappear*:
+`service.rejections` comes back empty, the CRITICAL log never fires, and the security event
+becomes invisible while every test about the served output still passes. The helpful version
+silently disables the audit.
+
+Verified by mutation: adding the filter turned `test_the_advisor_does_not_filter_an_unowned_id_itself`
+red in the unit suite **and** `test_case_11_a_cross_user_item_is_refused_through_the_real_adapter`
+red in the proof layer. Reverted.
+
+---
+
+### 2026-09-12 — Provider error messages are ours, never the provider's
+
+Context:
+`str(error)` from an SDK exception is the most informative thing available at the boundary.
+
+Decision:
+`ProviderError.message` is written by `groq_transport._sanitised()` and names only the
+exception type. The original is kept on `__cause__` for a debugger and never formatted into
+the error. A JSON parse failure reports line and column, never the payload.
+
+Why:
+A provider message can quote the request, and the request contains text recovered from a
+user's photograph — a slogan, a care label, a tag reading "ignore previous instructions"
+(Case 07). Echoing that into a log is how injected text gets read by a human later.
+`docs/SECURITY-PRIVACY.md` already forbids surfacing a raw provider message; this applies
+the same rule to the log and to the audit trail.
+
+---
+
+### 2026-09-12 — A missing model is fatal at boot; an unreachable provider is not
+
+Context:
+`docs/AI-SYSTEM.md` says both model ids are "verified against Groq's model list at boot" and
+that failures there should be loud. But the check has its own dependency, which can fail.
+
+Decision:
+Two outcomes, treated differently. A model id absent from the list raises
+`ConfigurationError` and the app does not start. A list call that *fails* is logged at ERROR
+and the app starts unverified, recording an empty `app.state.verified_models`.
+
+Why:
+`ConfigurationError` means we are configured wrong, which only a human can fix, and starting
+up turns one deployment error into a stream of unexplained user-facing failures. A failed
+list call may fix itself, and refusing to start on it means a provider blip during a rollout
+takes down the parts of the service that never touch the provider.
+
+A missing `GROQ_API_KEY` is unaffected and always fatal — it is caught earlier, by `Settings`
+itself (Case 25).
+
+---
+
+### 2026-09-12 — `create_app(transport=...)` instead of a "skip the boot check" flag
+
+Context:
+The boot check calls the provider. The `client` test fixture originally used the module-level
+`app`, whose lifespan built the real transport — so the suite made a live `models.list()`
+call with the fake key on every run. It passed (the failure is tolerated by design) and took
+ten seconds instead of four.
+
+Decision:
+`app/main.py` exposes `create_app(transport=None)`. Tests pass `MockGroqProvider`; production
+gets the default. `app = create_app()` stays at module level so `uvicorn app.main:app` is
+unchanged.
+
+Alternatives:
+A `verify_models_at_boot` setting defaulting to on. Rejected: a flag whose only purpose is
+to switch off a safety check is a flag that eventually ships switched off.
+
+Why:
+The real `verify_models` now runs *in* the test suite, against a scripted model list, rather
+than being skipped. And a unit suite that silently depends on the internet is a unit suite
+that fails on a train.
+
+---
+
+### 2026-09-12 — Advisory sanitisation lands now, and exempts wardrobe gaps
+
+Context:
+`docs/ARCHITECTURE.md` section 6 step 8 is "drop unattributed trend notes and unsupportable
+tips". S4 did the trend half and left the tips half outstanding. Case 22 forbids claims about
+fibre content, durability, price, and the user's body.
+
+Decision:
+`app/domain/advisory.py` drops any tip, budget trick or rationale line making one of those
+claims, and reports a reason per removal so the caller can log it. Claims are dropped whole,
+never edited.
+
+The fibre and durability rules **do not** apply to `wardrobe_gaps`. A gap names a kind of
+garment that is absent, where the material word is how the category is named —
+`docs/AI-EVAL-CASES.md` uses "a white leather sneaker" as its own example of a well-formed
+gap, and `GAP_DESCRIPTIONS` offers "a simple leather belt". Neither launders a guess, because
+there is no garment to have guessed about. Gaps are still checked for price, merchant, link
+and body claims. A test asserts every built-in gap description passes its own filter — a
+filter that rejected the product's own copy would be wrong about the spec it came from.
+
+Rewriting rather than dropping was rejected: editing out "wool" leaves a sentence the model
+never wrote, asserted with its authority, and nothing can check the edit preserved the
+meaning.
+
+Also recorded so nobody mistakes it for a security boundary: this is a word-list content
+filter on presentational fields. It will miss a paraphrase, and the cost of a miss is a
+hedged claim shown unhedged in cosmetic copy — not a wrong garment and not another user's
+data. The rules that carry weight are enforced structurally, in SQL and in memory.
+
+`shop` and `brand` are deliberately **not** in the commerce word list: "shop your own
+wardrobe" is a legitimate budget trick and "brand new" is ordinary English, and the literal
+word "brand" was never how a brand claim would arrive.
+
+A test found a real hole while writing this: "pick one up at example.com" passed a
+scheme-only URL check. The pattern now matches bare domains on a short TLD list, excluding
+`.co` and `.in` as too ambiguous for prose.
+
+---
+
+### 2026-09-12 — The live suite skips without a key; the application never does
+
+Context:
+`tests/live/` makes real billed calls and CI runs it on `main` only, with the secret.
+
+Decision:
+`tests/live/conftest.py` skips the whole suite when `GROQ_API_KEY` is absent — or when it is
+the fake `test-key…` value the unit suite sets. Two tests, five with the availability checks,
+and nothing more.
+
+Why:
+A test that cannot run has not found a bug. This is the one place a missing key is not an
+error, and it is worth being explicit that it is a *test* skipping and never the application
+degrading: the app refuses to boot without a key (Case 25), asserted in `test_config.py`.
+
+The suite is a canary for model deprecation, not a second test suite. Everything provable
+with `MockGroqProvider` is proven there, free, on every push. `test_model_availability.py`
+calls the same `verify_models` production calls at boot rather than a parallel
+re-implementation — a canary that checks something slightly different from production is a
+canary that can sing while production suffocates.
+
+`data/samples/` holds the real photographs the extraction smoke test needs. Empty today, so
+that test skips: a synthetic 1x1 pixel would only prove a model can describe a grey square.
+
+---
+
+### 2026-09-12 — Groq SDK over the OpenAI-compatible endpoint
+
+Context:
+prompts/12 allows "the official Groq SDK or its documented OpenAI-compatible interface".
+
+Decision:
+The official SDK, `groq>=0.30`, confined to `app/adapters/groq_transport.py`.
+
+Why:
+It carries a typed exception hierarchy — `RateLimitError`, `NotFoundError`,
+`APITimeoutError`, `AuthenticationError` — and the error taxonomy in this phase is built on
+telling those apart. Reimplementing that mapping over raw HTTP status codes would be work
+with no upside, and the boundary test already guarantees the SDK cannot leak past one file.
+
+A floor rather than a pin: Groq ships often and the surface used here
+(`chat.completions.create`, `models.list`, the exception types) is stable. Structured Outputs
+is supported as `response_format={"type": "json_schema", …}` with a `strict` flag, which is
+what `SchemaSpec` maps onto.
+
+---
+
+### 2026-09-12 — The two greps in CLAUDE.md were never true; the ast test is
+
+Context:
+`CLAUDE.md` and `app/adapters/__init__.py` both stated the adapter boundary as two greps
+coming back empty outside `adapters/`: `git grep -i groq` and `git grep -i crewai`. S5 was
+the first phase where enough Groq code existed to check, and they do not come back empty.
+
+What actually matches, all of it harmless:
+- `app/config.py` — `groq_api_key`, `groq_text_model`, `agent_framework: Literal["crewai"]`.
+  Those field names map to `GROQ_*` environment variables and cannot be renamed. CLAUDE.md
+  itself designates this file as the sanctioned home for model ids.
+- `app/domain/schemas.py`, `app/main.py` — docstring prose, and settings *attribute* reads
+  for startup logging.
+
+Decision:
+Correct the claim in both places rather than contort the code to satisfy it, and add the
+narrower rule that is worth enforcing: **no model id literal outside `app/config.py`**,
+checked over string constants with `ast`. Matched on vendor prefixes rather than a list of
+ids, because a test naming `qwen/qwen3.8-27b` would itself become a third place a model id
+lives.
+
+Why:
+A rule stated as a command that does not produce the stated result is worse than no rule —
+the first person to run it concludes the boundary is broken, or concludes the rule is
+decorative. The three things the greps were reaching for are all checkable precisely, and
+now are: no vendor import or symbol outside `adapters/`, no model id literal outside the
+config, and `domain/` never importing `adapters/`.
+
+The literal rule matters on its own terms: a model id baked into a route handler or a prompt
+survives a config change and outlives the deprecation notice.
+
+Verified by mutation: adding `MUTATED_DEFAULT = "qwen/qwen3.8-27b"` to `groq_vision.py`
+turned the new test red. Reverted. A companion test asserts the ids *are* still in
+`Settings`, so the first cannot pass vacuously by the ids moving somewhere untested.
+
+---
+
+### 2026-09-12 — Removed a contradictory blocker row from the ledger
+
+`docs/PROGRESS.md` listed B10 twice: closed on the user's 2026-09-12 confirmation that they
+had checked `.env` and `.env.example` by hand, and still open from S2. A source of truth that
+contradicts itself is not one, so the stale open row is gone and the closure records that a
+duplicate existed.
+
+The underlying constraint is unchanged: the project's own `Read(./.env.*)` deny rule still
+applies, those files remain uninspectable from here, and they are staged explicitly rather
+than by `git add -A`.

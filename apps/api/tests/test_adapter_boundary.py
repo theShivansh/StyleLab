@@ -100,3 +100,67 @@ def test_domain_models_name_no_provider_concept():
             assert not any(token in field_name.lower() for token in banned), (
                 f"{name}.{field_name} leaks a provider concept into the domain"
             )
+
+
+# --- model ids ---------------------------------------------------------------------------
+
+#: CLAUDE.md: "Model IDs appear in exactly two places: `.env.example` and the adapter
+#: config." `app/config.py` is that config. Everywhere else reads it.
+MODEL_ID_HOME = "config.py"
+
+#: Vendor prefixes rather than a list of ids — a test naming `qwen/qwen3.8-27b` would itself
+#: become a third place a model id lives, which is the thing being forbidden.
+MODEL_ID_PREFIXES = ("qwen/", "openai/gpt", "llama-3", "llama3-", "gemma", "mixtral")
+
+
+def _string_literals(tree: ast.AST) -> list[str]:
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+
+
+def test_no_model_id_literal_outside_the_adapter_config():
+    """The rule the two greps in CLAUDE.md were reaching for.
+
+    Those greps — `git grep -i groq` outside `adapters/` — never came back empty and never
+    could: `Settings` has to name its own fields `groq_api_key` and `groq_text_model`
+    because they map to `GROQ_*` environment variables, and prose in a docstring is not
+    coupling. Enforcing the literal grep would mean either renaming the settings away from
+    their env vars or deleting the explanations, both of which make the code worse.
+
+    What actually matters is narrower and checkable: a model **id** must not be written down
+    anywhere except the adapter config. An id baked into a route handler or a prompt survives
+    a config change and outlives the deprecation notice.
+
+    String literals only, via `ast` — a docstring that mentions a model id in prose is
+    documentation, and the parser tells the difference.
+    """
+    offenders: list[str] = []
+    for path in API_APP.rglob("*.py"):
+        if path.name == MODEL_ID_HOME:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for literal in _string_literals(tree):
+            # Docstrings are Constant nodes too; skip anything long enough to be prose.
+            if len(literal) > 120:
+                continue
+            for prefix in MODEL_ID_PREFIXES:
+                if prefix in literal.lower():
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}: {literal!r}")
+
+    assert not offenders, (
+        "model id written outside the adapter config — read it from Settings instead:\n"
+        + "\n".join(offenders)
+    )
+
+
+def test_the_adapter_config_does_hold_the_model_ids():
+    """The other half: if the ids moved out of config, the test above would pass vacuously."""
+    from app.config import Settings
+
+    fields = Settings.model_fields
+    for name in ("groq_text_model", "groq_vision_model", "groq_vision_fallback_model"):
+        assert name in fields, f"{name} is no longer configuration"
+        assert fields[name].default, f"{name} has no configured default"

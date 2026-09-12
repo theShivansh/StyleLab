@@ -13,8 +13,9 @@ The order of operations is the product:
     4  run the advisor over the retrieved set
     5  validate the shape           (app.domain.schemas, at the adapter edge)
     6  re-validate every item id    (app.domain.validation, in memory, no query)
-    7  recompute the score          (deterministic, from the items)
-    8  anything failed?             → deterministic ranker over the same set (rung 4)
+    7  drop unsupportable tips      (app.domain.advisory)
+    8  recompute the score          (deterministic, from the items)
+    9  anything failed?             → deterministic ranker over the same set (rung 4)
 
 Steps 4 and 6 are separated deliberately. No amount of agent deliberation substitutes for
 the ownership check, and a Critic agent that approved a response is not evidence.
@@ -31,6 +32,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.adapters import OutfitAdvisor, TrendSource
+from app.domain.advisory import sanitize_advisory
 from app.domain.compatibility import CORE_ROLES, missing_roles
 from app.domain.errors import IncompatibleOutfitError, SchemaInvalidError, UngroundedItemError
 from app.domain.models import (
@@ -114,7 +116,7 @@ class CompositionService:
             trend_notes=trend_notes,
         )
 
-        # 4..7 — advise, then validate what came back.
+        # 4..6 — advise, then validate what came back.
         try:
             advice = await self.advisor.advise(request)
             validated = validate_advice(advice, request=request)
@@ -152,7 +154,13 @@ class CompositionService:
             )
             return self._degrade(request)
 
-        return self._rescore(validated, request, degradation)
+        # 7 — drop unsupportable tips (ARCHITECTURE section 6). Removals are logged rather
+        #     than silent: a filter nobody can see is a filter nobody notices breaking.
+        cleaned, dropped = sanitize_advisory(validated)
+        if dropped:
+            logger.info("dropped unsupportable advisory content", extra={"dropped": dropped})
+
+        return self._rescore(cleaned, request, degradation)
 
     # --- internals ---------------------------------------------------------------------
 

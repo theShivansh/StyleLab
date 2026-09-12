@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "STYLELAB API — wardrobe extraction and outfit composition."
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    # The only vendor SDK, confined to app/adapters/groq_transport.py by
+    # tests/test_adapter_boundary.py. Floor rather than pin: Groq ships often and the
+    # surface we use (chat.completions, models.list, the typed exceptions) is stable.
+    "groq>=0.30",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",

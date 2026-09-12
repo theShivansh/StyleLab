@@ -1,0 +1,17 @@
+{
+  "outfit": {
+    "item_ids": [
+      "own-top",
+      "own-bottom",
+      "not-owned"
+    ],
+    "name": "Sharp Neutral",
+    "occasion": "everyday",
+    "match_score": 93
+  },
+  "rationale": [
+    "The loafer finishes it better than the sneaker would."
+  ],
+  "confidence": 0.91,
+  "degradation_level": 1
+}

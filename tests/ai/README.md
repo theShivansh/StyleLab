@@ -12,13 +12,24 @@ pytest tests/ai -q
 
 | File | |
 |---|---|
-| `stubs.py` | Stub adapters and domain fixtures. Test doubles for an external dependency — **not** a demo mode. Nothing under `apps/api/app/` may import them, and `apps/api/tests/test_query_scoping.py` enforces that (Case 25). |
-| `test_grounding.py` | Cases 01, 11 and 12 — the cases the domain layer can answer in full today. |
+| `stubs.py` | Test doubles and domain fixtures. **Not** a demo mode. Nothing under `apps/api/app/` may import them, and `apps/api/tests/test_query_scoping.py` enforces that (Case 25). |
+| `fixtures/groq/` | Recorded provider responses, loaded verbatim so a truncated payload stays truncated. |
+| `test_grounding.py` | Cases 01, 11, 12 with the **advisor** substituted. |
+| `test_adapter_grounding.py` | Cases 01, 06, 07, 11, 16, 22, 24 with only the **transport** substituted — the real Groq adapters run. |
 | `conftest.py` | Puts `apps/api` on `sys.path` so the directory runs from the repository root as well as in CI. |
 
-`ScriptedAdvisor` is the important one. It returns whatever a test hands it, including a
-well-formed, confident response naming an item belonging to somebody else — the only way to
-prove that ownership re-validation, rather than the prompt, is what refuses it.
+## Two levels of double, and why both
+
+- **`MockGroqProvider`** replaces the transport. The real `GroqWardrobeAnalyzer` and
+  `GroqOutfitAdvisor` sit on top and run their real prompt construction, parsing, retry and
+  fallback logic. This is what makes prompt 12's acceptance criterion checkable: *the domain
+  layer cannot tell whether it is using Groq or the mock adapter.*
+- **`ScriptedAdvisor` / `ScriptedAnalyzer`** replace the adapter, for testing everything
+  above it without caring how a response was produced.
+
+`ScriptedAdvisor` returns whatever a test hands it, including a well-formed, confident
+response naming an item belonging to somebody else — the only way to prove that ownership
+re-validation, rather than the prompt, is what refuses it.
 
 ## Still to come
 

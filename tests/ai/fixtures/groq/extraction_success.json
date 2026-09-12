@@ -1,0 +1,30 @@
+{
+  "category": "top",
+  "subcategory": "oxford shirt",
+  "color_primary": "navy",
+  "color_secondary": null,
+  "pattern": "solid",
+  "material_guess": "cotton",
+  "fit": "regular",
+  "formality": "smart-casual",
+  "season_tags": [
+    "spring",
+    "autumn"
+  ],
+  "occasion_tags": [
+    "work",
+    "everyday"
+  ],
+  "style_tags": [
+    "minimal",
+    "preppy"
+  ],
+  "field_confidence": {
+    "category": 0.97,
+    "subcategory": 0.84,
+    "color_primary": 0.62,
+    "material_guess": 0.41,
+    "fit": 0.79
+  },
+  "quality_warnings": []
+}

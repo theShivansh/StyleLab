@@ -1,0 +1,138 @@
+"""One real extraction and one real composition.
+
+Everything here is `smoke`-marked and billed. The question these answer is the one no mock
+can: *does the live model actually satisfy the schema we send it?* Structured Outputs is a
+provider feature with provider-specific quirks, and a schema that validates perfectly
+against a fixture can still be refused or quietly ignored by a real model.
+
+Kept to two calls. `tests/ai/` proves the logic for free on every push; this proves the
+contract holds against the thing itself, on main, once.
+
+The extraction test needs a real image. `data/` holds a few sample garment photographs for
+exactly this purpose (`CLAUDE.md` — test fixtures only, no seed catalogue); when none is
+present the test skips rather than inventing one, because a synthetic 1x1 pixel would prove
+that the model can describe a grey square.
+"""
+
+from __future__ import annotations
+
+import base64
+from pathlib import Path
+
+import pytest
+from app.adapters.groq_text import GroqOutfitAdvisor
+from app.adapters.groq_vision import GroqWardrobeAnalyzer
+from app.domain.models import (
+    AdviceRequest,
+    GarmentExtraction,
+    GarmentImage,
+    ItemStatus,
+    WardrobeItem,
+)
+from app.domain.models import GarmentCategory as C
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SAMPLES = REPO_ROOT / "data" / "samples"
+SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
+
+
+class DataUrls:
+    """Serves a local file as a data URL.
+
+    The live suite has no object storage and no signing service, so the real
+    `SignedUrlSource` cannot be used here. A data URL keeps the image reference out of any
+    log while still exercising the real analyzer against the real model — which is what this
+    suite is for. Production passes a short-lived signed URL instead; that path is covered
+    by `apps/api/tests/test_groq_adapter.py`.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    async def signed_url(self, storage_key: str, *, ttl_s: int = 300) -> str:
+        encoded = base64.b64encode(self.path.read_bytes()).decode("ascii")
+        suffix = "jpeg" if self.path.suffix in {".jpg", ".jpeg"} else self.path.suffix.lstrip(".")
+        return f"data:image/{suffix};base64,{encoded}"
+
+
+def _sample() -> Path:
+    if not SAMPLES.is_dir():
+        pytest.skip(f"no sample garment photographs in {SAMPLES.relative_to(REPO_ROOT)}")
+    for path in sorted(SAMPLES.iterdir()):
+        if path.suffix.lower() in SUFFIXES:
+            return path
+    pytest.skip(f"no usable image in {SAMPLES.relative_to(REPO_ROOT)}")
+
+
+@pytest.mark.smoke
+async def test_a_real_extraction_satisfies_the_schema(transport, settings):
+    """The claim the whole product rests on: a real photo becomes structured data."""
+    sample = _sample()
+    analyzer = GroqWardrobeAnalyzer(
+        transport,
+        model=settings.groq_vision_model,
+        fallback_model=settings.groq_vision_fallback_model,
+        urls=DataUrls(sample),
+    )
+
+    outcome = await analyzer.analyze_with_audit(
+        GarmentImage(asset_id="live", storage_key=sample.name)
+    )
+
+    assert outcome.extraction.category is not None
+    # Per-field confidence is the honesty signal. A model returning none of it would pass
+    # the schema and defeat the point of the extraction path.
+    assert outcome.extraction.field_confidence, "no per-field confidence came back"
+    assert all(0.0 <= score <= 1.0 for score in outcome.extraction.field_confidence.values())
+    # And it should not have needed the availability fallback on a healthy day.
+    assert outcome.used_fallback is False
+
+
+@pytest.mark.smoke
+async def test_a_real_composition_stays_inside_the_candidate_set(transport, settings):
+    """Grounding, against the live model rather than a fixture.
+
+    The candidates are constructed here rather than read from a database: this suite has no
+    database, and the assertion is about what the *model* does with a candidate list.
+    Ownership enforcement itself is proven in `tests/ai/test_grounding.py`.
+    """
+    candidates = [
+        _item("live-top", C.TOP, "navy", "oxford shirt"),
+        _item("live-bottom", C.BOTTOM, "stone", "chinos"),
+        _item("live-shoe", C.FOOTWEAR, "white", "leather sneaker"),
+        _item("live-jacket", C.OUTERWEAR, "olive", "chore jacket"),
+    ]
+    request = AdviceRequest(
+        user_id="live",
+        candidates=candidates,
+        occasion="everyday",
+        vibe="minimal",
+        required_roles=[C.TOP, C.BOTTOM, C.FOOTWEAR],
+    )
+
+    advice = await GroqOutfitAdvisor(transport, model=settings.groq_text_model).advise(request)
+
+    allowed = {item.item_id for item in candidates}
+    assert advice.outfit is not None, "the live model returned no outfit for a full wardrobe"
+    assert set(advice.outfit.item_ids) <= allowed, (
+        f"live model named an id outside the candidate set: "
+        f"{set(advice.outfit.item_ids) - allowed}"
+    )
+    assert advice.rationale, "an outfit with no reasoning is not the product"
+
+
+def _item(item_id: str, category: C, colour: str, subcategory: str) -> WardrobeItem:
+    return WardrobeItem(
+        item_id=item_id,
+        user_id="live",
+        status=ItemStatus.READY,
+        extraction=GarmentExtraction(
+            category=category,
+            subcategory=subcategory,
+            color_primary=colour,
+            pattern="solid",
+            fit="regular",
+            style_tags=["minimal"],
+            field_confidence={"category": 0.95},
+        ),
+    )

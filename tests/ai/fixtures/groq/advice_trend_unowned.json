@@ -1,0 +1,35 @@
+{
+  "outfit": {
+    "item_ids": [
+      "own-top",
+      "own-bottom",
+      "own-shoe"
+    ],
+    "name": "Quiet Navy",
+    "occasion": "everyday",
+    "match_score": 86
+  },
+  "rationale": [
+    "Neutral through."
+  ],
+  "confidence": 0.8,
+  "trend_notes": [
+    {
+      "trend": "Wide-leg trousers still reading current",
+      "source": "example-publication",
+      "published_at": "2026-07-14",
+      "applies_to_items": [
+        "not-owned"
+      ]
+    },
+    {
+      "trend": "Neutral palettes holding through AW26",
+      "source": "example-publication",
+      "published_at": "2026-08-02",
+      "applies_to_items": [
+        "own-top"
+      ]
+    }
+  ],
+  "degradation_level": 1
+}

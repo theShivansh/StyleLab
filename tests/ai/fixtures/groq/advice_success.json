@@ -1,0 +1,34 @@
+{
+  "outfit": {
+    "item_ids": [
+      "own-top",
+      "own-bottom",
+      "own-shoe"
+    ],
+    "name": "Quiet Navy",
+    "occasion": "everyday",
+    "match_score": 86
+  },
+  "rationale": [
+    "The navy shirt anchors the palette and the white shoe lifts it.",
+    "One relaxed piece against two regular ones keeps the shape readable."
+  ],
+  "confidence": 0.84,
+  "pro_tips": [
+    {
+      "tip": "Half-tuck the shirt to shorten the torso line.",
+      "type": "proportion"
+    },
+    {
+      "tip": "Cuff the trouser once so the shoe reads as deliberate.",
+      "type": "proportion"
+    }
+  ],
+  "budget_tricks": [
+    "This shirt works open over a plain tee, which is a second outfit from one garment."
+  ],
+  "wardrobe_gaps": [],
+  "trend_notes": [],
+  "missing_roles": [],
+  "degradation_level": 1
+}
