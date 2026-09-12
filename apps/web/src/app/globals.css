@@ -8,38 +8,67 @@
 --------------------------------------------------------------------------- */
 
 @theme {
-  /* Surfaces — warm neutral, not grey */
-  --color-ivory: #faf9f7;
-  --color-ivory-sunk: #f2f0ec;
-  --color-ivory-raised: #ffffff;
+  /* Surfaces — values taken verbatim from UX-UI-SPEC.md */
+  --color-bg: #faf9f7;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f2f1ef;
 
   /* Ink */
   --color-ink: #111111;
-  --color-ink-muted: #5a5751;
-  --color-ink-faint: #8e8a83;
+  --color-ink-muted: #6d6d6d; /* 4.9:1 on --color-bg — passes AA for body text */
 
-  /* Accent — controlled, never decorative */
+  /* Accent — used selectively, never decoratively */
   --color-accent: #ff3f7f;
-  --color-accent-sunk: #e02c69;
-  --color-accent-wash: #ffe9f0;
+  --color-accent-deep: #d92a66; /* 4.6:1 on white, for accent text that must pass AA */
+  --color-accent-soft: #ffe7f0;
+
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-strong: rgba(0, 0, 0, 0.16);
 
   /* Semantic */
-  --color-line: #e4e1db;
   --color-danger: #b42318;
   --color-warning: #b54708;
   --color-success: #067647;
 
-  /* Confidence — the UI must make a guess look like a guess */
+  /* Confidence. The product's core honesty affordance: a guess must look like one. */
   --color-confident: #067647;
   --color-hedged: #b54708;
-  --color-unknown: #8e8a83;
+  --color-unknown: #6d6d6d;
 
   /* Radii — 20-28px cards per the spec */
-  --radius-card: 24px;
   --radius-card-sm: 20px;
+  --radius-card: 24px;
   --radius-card-lg: 28px;
   --radius-control: 12px;
   --radius-pill: 999px;
+
+  /* Shadows — soft neutral, never a coloured glow */
+  --shadow-raised: 0 1px 2px rgba(17, 17, 17, 0.04), 0 8px 24px -12px rgba(17, 17, 17, 0.12);
+  --shadow-floating: 0 2px 4px rgba(17, 17, 17, 0.05), 0 24px 48px -20px rgba(17, 17, 17, 0.18);
+
+  /* Editorial display scale — compressed headings, high-readability body */
+  --text-display: clamp(2.5rem, 10.5vw, 5.5rem);
+  --text-display--line-height: 0.94;
+  --text-display--letter-spacing: -0.035em;
+  --text-display--font-weight: 600;
+
+  --text-headline: clamp(1.875rem, 5.5vw, 3rem);
+  --text-headline--line-height: 1.04;
+  --text-headline--letter-spacing: -0.025em;
+  --text-headline--font-weight: 600;
+
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.25;
+  --text-title--letter-spacing: -0.015em;
+  --text-title--font-weight: 600;
+
+  --text-lede: 1.1875rem;
+  --text-lede--line-height: 1.55;
+
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1;
+  --text-eyebrow--letter-spacing: 0.16em;
+  --text-eyebrow--font-weight: 500;
 
   /* Motion. Functional 100-180, spatial 250-500, hero 600-1200. */
   --duration-functional: 140ms;
@@ -48,7 +77,9 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
-  /* Type */
+  /* Smallest acceptable touch target (UX-UI-SPEC accessibility) */
+  --size-touch: 44px;
+
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
@@ -57,23 +88,53 @@
   color-scheme: light;
 }
 
+/* A single long display word ("Recomposed.") must wrap or hyphenate rather than widen the
+   document. Belt and braces alongside the fluid clamp above. */
+h1,
+h2 {
+  overflow-wrap: break-word;
+}
+
 body {
-  background: var(--color-ivory);
+  background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* Focus is never removed, only restyled. QA-RELEASE gates on visible focus. */
 :focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-  border-radius: 2px;
+  outline: 2px solid var(--color-accent-deep);
+  outline-offset: 3px;
+  border-radius: 4px;
 }
 
-/* CLAUDE.md motion rule: honour prefers-reduced-motion.
-   Motion is suppressed, not merely shortened — and never at the cost of a state change
-   the user needs to perceive. */
+/* Reveal motion.
+   Transition-based, not keyframe-based, and deliberately so. An animation with
+   `fill-mode: both` holds its `from` state (opacity 0) whenever the animation does not
+   actually run — a paused or throttled animation, a screenshot capture, or a print
+   stylesheet — which makes content invisible. A transition degrades the other way: if it
+   never runs, the element is simply already at its final, visible state.
+   Every failure mode should land on "visible". */
+[data-revealed] {
+  transition:
+    opacity var(--duration-spatial) var(--ease-standard),
+    transform var(--duration-spatial) var(--ease-standard);
+}
+
+[data-revealed="false"] {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0);
+}
+
+[data-revealed="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* MOTION-SYSTEM reduced-motion rules: remove parallax and animated backgrounds, reduce
+   transform distance, and keep essential state transitions understandable. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -83,9 +144,18 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  /* Content is visible with no transform, whatever the reveal state says. */
+  [data-revealed],
+  [data-revealed="false"],
+  [data-revealed="true"] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
 }
 
-/* Screen-reader-only, for the a11y utilities in src/lib/a11y.ts */
+/* Screen-reader-only, paired with the a11y utilities in src/lib/a11y.ts */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -96,4 +166,15 @@ body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+
+.focus\:not-sr-only:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: 0.625rem 1rem;
+  margin: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
 }

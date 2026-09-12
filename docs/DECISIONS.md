@@ -385,3 +385,64 @@ The deployment target must also run 3.11. Record it in the container/runtime con
 S11 sets deployment up, or the drift returns at the last possible moment.
 
 Supersedes: assumption 3 in the S0 entry above, and `docs/PLAN.md` §5.3.
+
+---
+
+### 2026-09-12 — S2 landing: two spec substitutions and a motion rewrite
+
+Context:
+`docs/UX-UI-SPEC.md` section 1 predates the wardrobe pivot and the demo-mode removal, so two
+of its landing elements could not be built as written.
+
+Decisions:
+
+1. **Secondary CTA "Explore demo" → "See how it works".** There is no demo mode and no demo
+   wardrobe, so there is nothing to explore without uploading. An "Explore demo" button would
+   be a promise the product cannot keep. The secondary action scrolls to the explanation.
+
+2. **"Sample looks" section → "Anatomy of a read" (`ExtractionAnatomy`).** Sample looks need
+   garment photography and the project ships zero garment assets by decision (B1/B2 closed).
+   Fabricating a closet on the landing page would contradict the grounding rule the product
+   rests on. The replacement shows the actual differentiator — a low-confidence field beside
+   the same field after user correction — built from the real Zod schema so it cannot drift
+   from the live contract, and labelled as an interface illustration.
+
+3. **No vendor UI component vendored yet.** UX-UI-SPEC says to use Vengeance UI and Skiper UI
+   "selectively"; selectively includes "not yet". The landing needs one reveal primitive and
+   a dialog, both of which are better served by ~60 lines of local code than by vendoring a
+   file from a registry that has to be read line-by-line first. Revisit at S7, where a
+   carousel or complex image interaction might genuinely earn it. No Skiper UI attribution is
+   required in the colophon until one is actually used.
+
+4. **Reveal motion rewritten from keyframes to transitions, with layered fallbacks.**
+   This was a bug, not a preference. The first implementation hid content with `opacity: 0`
+   and revealed it via a keyframe animation with `fill-mode: both`, gated on
+   IntersectionObserver. Three separate failure modes were found, each leaving the page blank:
+   - an animation with `both` fill holds its `from` state whenever it does not actually run
+     (paused, throttled, screenshot capture, print stylesheet);
+   - an instant scroll or anchor jump moves past elements without them ever intersecting;
+   - **IntersectionObserver is throttled to the point of never firing at all in an occluded
+     window** — verified directly: a freshly-created observer's callback never ran.
+
+   The rule adopted: **every failure mode must land on "visible".** Visibility now lives in
+   CSS keyed off `data-revealed`, driven by a transition (which degrades to the final state
+   rather than the initial one), with three independent triggers — IntersectionObserver, a
+   scroll/resize position check, and a 2.5s safety timer — plus two static escapes needing no
+   JS at all: reduced-motion renders visible immediately, and a `<noscript>` rule forces every
+   reveal visible. `AI-EVAL-CASES`-style regression: an e2e test deletes
+   `window.IntersectionObserver` outright and asserts the page still renders.
+
+5. **`tailwind-merge` added.** `cn()` was a 6-line joiner with a comment saying conflict
+   resolution could wait until genuinely needed. It was needed: `Button`'s base sets
+   `inline-flex`, the navbar passed `hidden sm:inline-flex`, and the winner is decided by
+   Tailwind's stylesheet order rather than attribute order — so the desktop CTA rendered at
+   375px and caused horizontal overflow. Found by the overflow test, not by review.
+
+6. **Fluid display type via `clamp()`.** `4.25rem` made "Recomposed." 500px wide, overflowing
+   a 375px viewport. `clamp(2.5rem, 10.5vw, 5.5rem)` scales instead of clipping and removed
+   the breakpoint step entirely.
+
+7. **Font variables moved from `<body>` to `<html>`.** Tailwind 4 hoists `@theme` tokens to
+   `:root`, so `--font-sans: var(--font-geist-sans), ...` was substituted in `:root`'s context
+   where `--font-geist-sans` did not exist — the token computed to an empty string and every
+   element silently fell back to the UA font stack. Geist was not applying anywhere.

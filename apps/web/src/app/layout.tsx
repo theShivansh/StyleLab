@@ -12,8 +12,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
+    // The font variable classes belong on <html>, not <body>. Tailwind 4 hoists @theme
+    // tokens to :root, so a token defined as `var(--font-geist-sans), ...` is substituted
+    // in :root's context — if the variable only exists on a descendant, the token computes
+    // to an empty string and every element silently falls back to the UA font stack.
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body>
+        {/* Reveal animations are progressive enhancement. With JS off, nothing sets
+            data-revealed to "true", so force every reveal visible rather than shipping a
+            blank page. */}
+        <noscript>
+          <style>{`[data-revealed]{opacity:1 !important;transform:none !important}`}</style>
+        </noscript>
         <a href="#main" className="sr-only focus:not-sr-only">
           Skip to content
         </a>

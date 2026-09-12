@@ -9,7 +9,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 |---|-------|--------|-------|--------|--------------|--------------------|
 | S0 | Recon + plan | 00 | done | (this commit) | n/a — no code | docs/PLAN.md written. Prompt 00 patched: 5 instructions superseded. No implementation, by design. |
 | S1 | Foundation | 01 | done | (this commit) | L T U E B | pnpm workspace, Next 16 web, FastAPI api. Gate verified blocking. Python reversed to 3.11. |
-| S2 | Design system + landing | 02 | todo | — | — | |
+| S2 | Design system + landing | 02 | done | (this commit) | L T U E B A | Landing coherent 390/768/1440. Contrast 0 fails/86 nodes. Reveal rewritten for robustness. |
 | S2b | Reference → UI | 09 | skip? | — | — | only if refs provided |
 | S3 | Onboarding + composer | 03 | todo | — | — | |
 | S4 | Wardrobe domain | 04 | todo | — | — | |
@@ -47,6 +47,7 @@ States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
 - [ ] B7 — GROQ_API_KEY is now required to run anything. Provision it, add it to repo
       secrets for the live-smoke CI job, and rehearse against the live path.
       Not blocking S1-S4 (interfaces and stubs only); blocking from S5.
+- [x] B10 — CLOSED. User verified .env and .env.example by hand 2026-09-12.
 - [x] B9 — RESOLVED in S1. Pinned to 3.11 in CI and locally; 3.12 was never installed and
       installing it is a system change. See docs/DECISIONS.md.
 - [ ] B10 — .env.example has an uninspectable uncommitted change (deny rule Read(./.env.*)
