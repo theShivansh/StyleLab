@@ -1,0 +1,44 @@
+# --- secrets (kit shipped none of this; add BEFORE first commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.claude/settings.local.json
+.mcp.json
+
+# --- node / next ---
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+.vercel/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# --- test artifacts ---
+playwright-report/
+test-results/
+coverage/
+blob-report/
+tests/**/__screenshots__/*.actual.png
+
+# --- local user images (privacy rule in docs/SECURITY-PRIVACY.md) ---
+/storage/
+/uploads/
+*.local.json
+
+# --- os ---
+.DS_Store
+Thumbs.db

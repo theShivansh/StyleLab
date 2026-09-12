@@ -1,0 +1,61 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//**)",
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(rg:*)", "Bash(grep:*)", "Bash(find:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git add:*)",
+      "Bash(git commit:*)", "Bash(git checkout -b:*)", "Bash(git branch:*)",
+      "Bash(pnpm install:*)", "Bash(pnpm add:*)", "Bash(pnpm run:*)", "Bash(pnpm dlx:*)",
+      "Bash(npx:*)", "Bash(node:*)",
+      "Bash(python:*)", "Bash(python3:*)", "Bash(uv:*)", "Bash(pip install:*)",
+      "Bash(pytest:*)", "Bash(ruff:*)", "Bash(alembic:*)",
+      "Bash(mkdir:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(touch:*)",
+      "mcp__playwright__*"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/*.pem)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(curl:*)",
+      "WebFetch"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(pnpm publish:*)",
+      "Bash(vercel:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/gate.sh",
+            "args": [],
+            "timeout": 300,
+            "statusMessage": "Running phase gate (lint + typecheck)..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(**/*.ts)",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/quick-tsc.sh",
+            "args": [],
+            "timeout": 90,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

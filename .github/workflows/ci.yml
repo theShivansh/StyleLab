@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    env:
+      APP_MODE: demo          # CI must never need GROQ_API_KEY
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: lts/*, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web lint
+      - run: pnpm --filter web typecheck
+      - run: pnpm --filter web test:unit
+      - run: pnpm --filter web build
+
+  api:
+    runs-on: ubuntu-latest
+    env:
+      APP_MODE: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e "apps/api[dev]"
+      - run: ruff check apps/api
+      - run: pytest apps/api/tests -q
+
+  ai-eval:
+    runs-on: ubuntu-latest
+    needs: [api]
+    env:
+      APP_MODE: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e "apps/api[dev]"
+      - name: Grounding regression (mock provider only)
+        run: pytest tests/ai -q
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [web]
+    env:
+      APP_MODE: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: lts/*, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm --filter web test:e2e -- --grep @critical
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report, path: playwright-report/ }

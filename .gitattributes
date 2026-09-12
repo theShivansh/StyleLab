@@ -1,0 +1,15 @@
+# The Stop/PostToolUse hooks are bash scripts. Git on Windows checks out CRLF by
+# default, and bash fails on a CRLF shebang ("\r: command not found"), which would
+# silently disable the phase gate on a fresh clone. Keep them LF everywhere.
+*.sh text eol=lf
+
+# CI runs on ubuntu-latest; keep shared config byte-identical across platforms.
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Seed catalogue imagery (docs/DATA-MODEL.md, blocker B1) — never line-ending munged.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.avif binary
