@@ -142,6 +142,33 @@ POST /wardrobe/items (n images)
 
 One bad image fails one job. It must never fail the batch.
 
+## Composition and swap (S7)
+
+Two calls with opposite shapes, decided by what is on the other side of each.
+
+`POST /outfits/compose` is a job. It reaches a provider — one text call now, the crew behind
+the same Protocol in S8b — so the route returns 202 and the client polls the stages. The
+runner (`app/services/compose.py`) retrieves the candidate set in one short unit of work,
+awaits the advisor holding **no** database session, and persists in another. That is the same
+rule the extraction pipeline follows, and it is measured rather than asserted:
+`apps/api/tests/test_compose_service.py` has the advisor count the open sessions.
+
+`POST /outfits/{id}/swap` is synchronous and calls nothing. A scoped read, a recompute over
+the six scoring dimensions, one row rewritten. The other slots keep their garments *and their
+rank*, which is the persistence half of the product promise — changing one item changes one
+item. It returns the whole look rather than a patch, so the client renders a payload it did
+not assemble; merging a partial response into local state is how a screen ends up disagreeing
+with the wardrobe.
+
+`GET /outfits/{id}/alternatives` scores each candidate **in the look**, against the pieces
+actually on screen, and reports the delta. Ordering is by score then id, so the sheet does not
+reshuffle between openings.
+
+Nothing in this path can introduce a garment. Candidates come from the one ownership-scoped
+query; the advisor's response is re-validated against that set in memory; a swap's replacement
+is read through the same scoped repository, so an id belonging to someone else is
+indistinguishable from one that does not exist.
+
 Implemented in S6. The runner is in-process (blocker B14) and the seam is `submit`, which
 takes a factory and returns nothing — a durable queue replaces it without touching the
 pipeline. What is not deferred is the property that would be expensive to retrofit: the

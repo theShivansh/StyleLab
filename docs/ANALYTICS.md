@@ -96,6 +96,23 @@ Break failures by:
 Create a typed `AnalyticsClient` abstraction. Do not scatter vendor event APIs across
 React components.
 
+Built in S7: `apps/web/src/lib/analytics.ts`. There is no vendor behind it yet — PostHog is
+wired up with the rest of the funnel in S9 — so the default sink drops events and the seam is
+one function to replace. What exists now is the type, and the type is the data-hygiene rule:
+every event names the properties it may carry, and none of them is an image URL, a garment
+name typed by a user, or anything derived from a photograph beyond the metadata the wardrobe
+already shows on screen.
+
+A signed image URL is a live capability. In an analytics payload it would hand a third party
+a working link to someone's photograph, which is why the list below cannot express one.
+
+Emitting as of S7: `compose_clicked`, `composition_started`, `composition_completed`,
+`composition_failed`, `insufficient_wardrobe`, `outfit_viewed`, `swap_opened`, `item_swapped`,
+`outfit_regenerated`, `outfit_saved`, `outfit_shared`, `wardrobe_gap_shown`.
+
+Deliberately not the default sink: `console.log`. A product that prints a running commentary
+of the user's session to their devtools looks like it is leaking, whatever it is doing.
+
 ## Data hygiene
 
 Never send:

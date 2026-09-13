@@ -174,59 +174,139 @@ piece (AI-EVAL-CASES Case 14).
 {
   "occasion": "college",
   "vibe": "minimal-street",
+  "fit_preference": "regular",
+  "color_preferences": [],
   "required_roles": ["top", "bottom", "footwear"]
 }
 ```
 
 No item IDs are accepted from the client — candidates are retrieved server-side from the
 caller's wardrobe. Accepting client-supplied IDs would move the ownership boundary into
-the request body.
+the request body. Every field is optional; the occasion defaults and the roles fall back to
+the three that make an outfit, so a user who skipped the preferences step still composes.
 
-Return: a job. Composition runs the agent crew, so it is always async — see
-`docs/AGENT-SYSTEM.md` for the stages surfaced through `GET /jobs/{job_id}`.
+`202` and a job. Composition calls a provider — one text call today, the crew in S8b — and a
+route that blocked would have to change when that happens.
 
-Completed result:
+```json
+{ "job_id": "job_9", "type": "compose_outfit", "status": "queued",
+  "stage": null, "progress": null, "result_id": null }
+```
+
+Stages come from the composition vocabulary — `reading your wardrobe`, `matching silhouettes`,
+`balancing palette`, `building look`, `ready` — and are reported through `GET /jobs/{job_id}`
+like any other job. **Only the stages that correspond to work actually being done are
+emitted.** At the single-call rung that is three of the five; the middle two happen inside
+the advisor call, and firing them anyway would be a spinner with a caption (docs/DECISIONS.md).
+
+When the job completes, `result_id` is the outfit to fetch:
+
+```json
+{ "job_id": "job_9", "type": "compose_outfit", "status": "completed",
+  "stage": "ready", "progress": 1.0, "result_id": "outfit_7" }
+```
+
+Insufficient wardrobe is a **completed** job with no outfit and the gap named inline. Not a
+failed one: a failure offers a retry, and retrying cannot conjure a pair of trousers.
+
+```json
+{ "job_id": "job_9", "type": "compose_outfit", "status": "completed",
+  "stage": "ready", "progress": 1.0, "result_id": null,
+  "result": {
+    "missing_roles": ["footwear"],
+    "wardrobe_gaps": [{ "category": "footwear",
+                        "generic_description": "a clean low-profile shoe in a neutral colour",
+                        "unlocks_outfits": 0 }],
+    "rationale": ["Your wardrobe needs footwear before this look can be built."],
+    "degradation_level": 5
+  } }
+```
+
+## GET /outfits/{outfit_id}
+
+The result screen's read, and the read behind every reload and every swap.
+
 ```json
 {
-  "outfit": { "item_ids": ["item_1","item_4","item_9"], "name": "Quiet Weekday",
-              "occasion": "college", "match_score": 87 },
+  "outfit_id": "outfit_7",
+  "name": "Quiet Weekday",
+  "occasion": "college",
+  "match_score": 87,
+  "status": "ready",
+  "degradation_level": 1,
   "rationale": ["Neutral palette holds together", "Relaxed top against a slim leg"],
+  "saved": false,
+  "missing_roles": [],
+  "slots": [
+    { "role": "top", "item_id": "item_1", "item": { "...": "a wardrobe item payload" } },
+    { "role": "bottom", "item_id": "item_4", "item": { "...": "..." } },
+    { "role": "footwear", "item_id": "item_9", "item": { "...": "..." } }
+  ],
   "confidence": 0.87,
-  "critique": { "considered": ["the olive jacket, too heavy for the occasion"],
-                "tradeoffs": ["proportion is deliberate, not accidental"] },
   "pro_tips": [{ "tip": "Half-tuck the shirt to break the vertical line",
                  "type": "proportion" }],
-  "alternatives": [{ "swap_role": "footwear", "item_id": "item_12",
-                     "why": "same palette, lifts the formality" }],
-  "combinations": [{ "item_ids": ["item_1","item_7"], "occasion": "evening",
-                     "name": "Same shirt, later" }],
-  "budget_tricks": [{ "trick": "Layer the grey tee under the open shirt for a third look",
-                      "unlocks_outfits": 3 }],
+  "budget_tricks": ["Layer the grey tee under the open shirt for a third look"],
   "wardrobe_gaps": [{ "category": "footwear",
                       "generic_description": "a white leather sneaker",
                       "unlocks_outfits": 5 }],
-  "trend_notes": [{ "trend": "Relaxed tailoring holding through AW26",
-                    "source": "...", "published_at": "2026-07-14",
-                    "applies_to_items": ["item_4"] }],
-  "degradation_level": 1
+  "trend_notes": []
 }
 ```
 
 Contract rules enforced server-side before this is returned:
-- every `item_id` in every field belongs to the caller
+- every item in every slot belongs to the caller
 - every `trend_notes` entry has `source` and `published_at`, or it is absent
 - `wardrobe_gaps[].generic_description` carries no brand, price, merchant or link
 - `degradation_level` (1-5, `docs/AGENT-SYSTEM.md`) is reported honestly; the UI says when
   advice is shallower than usual rather than pretending otherwise
+- there is **no price and no total anywhere in this payload**, and no field a client could
+  sum. The product sells nothing.
 
-Insufficient wardrobe is a 200 with a named gap, not an error:
+`match_score` is Style Match: a UX heuristic, recomputed from the items by
+`app.domain.scoring` rather than taken from whatever number the advisor asserted. Two
+identical wardrobes must not show different figures because a model felt differently.
+
+A slot whose garment was deleted keeps its place with `"item": null`, `status` becomes
+`incomplete` and `missing_roles` names the role. The look is never silently shortened —
+the screen has to be able to say *which* piece went missing and offer a swap for it
+(AI-EVAL-CASES Case 14).
+
+`critique` and `combinations` are absent. They belong to the agent crew and arrive with it in
+S8b; a field in the contract that nothing produces is a contract nobody honours.
+
+## GET /outfits/{outfit_id}/alternatives?role=bottom
+
+Compatible alternatives from the caller's wardrobe, best first.
+
 ```json
 {
-  "outfit": null,
-  "missing_roles": ["footwear"],
-  "message": "You have no footwear yet — add a pair and I'll finish this look."
+  "role": "bottom",
+  "current_item_id": "item_4",
+  "alternatives": [
+    { "item": { "...": "a wardrobe item payload" }, "match_score": 88, "delta": 4 }
+  ],
+  "gap": null
 }
 ```
+
+`match_score` is what the **look** would score with that garment in it, not what the garment
+scores alone, and `delta` is the difference from the look as it stands. Candidates are scored
+against the other pieces currently on screen: a shortlist ordered by solo score would
+recommend the best shoe in the wardrobe rather than the best shoe with this shirt.
+
+A negative delta is returned as readily as a positive one. The score is a heuristic and the
+swap is the user's to make.
+
+Empty is a valid answer and a 200:
+
+```json
+{ "role": "footwear", "current_item_id": "item_9", "alternatives": [],
+  "gap": { "category": "footwear",
+           "generic_description": "a clean low-profile shoe in a neutral colour" } }
+```
+
+The UI must handle that as a gap with an invitation to add a garment, never as an error. A
+role the look does not contain is `422 ROLE_NOT_IN_OUTFIT`.
 
 ## POST /outfits/{outfit_id}/swap
 
@@ -234,17 +314,43 @@ Insufficient wardrobe is a 200 with a named gap, not an error:
 { "role": "bottom", "replacement_item_id": "item_9" }
 ```
 
-Recomposes that role only. Returns the updated outfit with the other roles unchanged.
-`replacement_item_id` is ownership-checked before use.
+Recomposes that role only and returns **the whole updated outfit**, in the same shape as
+`GET /outfits/{outfit_id}`. The full look rather than a patch, so the client renders from one
+payload it did not assemble itself — a client merging a partial response into its own copy is
+a client that can show a combination the wardrobe does not agree with.
 
-## GET /outfits/{outfit_id}/alternatives?role=bottom
+Synchronous, and it calls no model. A scoped read, a recompute over six dimensions and one
+row rewritten; the other slots keep their garments and their order.
 
-Compatible alternatives from the caller's wardrobe. Empty array is a valid answer and the
-UI must handle it as a gap, not an error.
+The narration is rewritten too. `rationale` is recomputed from the new score and the pro
+tips, budget tricks and trend notes are dropped, because they were written about a
+combination that no longer exists (docs/DECISIONS.md). Wardrobe gaps survive: they describe
+the wardrobe, not the look.
+
+Refusals, all `422` except where noted, and none of them echo an id back as prose:
+
+| code | when |
+|---|---|
+| `ROLE_NOT_IN_OUTFIT` | the look has no slot for that role |
+| `ROLE_MISMATCH` | the replacement is a top and the slot is a bottom |
+| `ITEM_NOT_READY` | the replacement is still being analysed and has nothing to score |
+| `UNKNOWN_ROLE` | the role is not a garment category |
+| *(404)* | the outfit or the replacement is not the caller's, or was deleted |
+
+Swapping in the garment already in the slot is a **no-op 200**, not an error: the second tap
+on the item you just chose should do nothing.
 
 ## POST /outfits/{outfit_id}/save
 
-Idempotent.
+Idempotent — enforced by a unique constraint on `(user_id, outfit_id)` rather than by this
+handler remembering to check.
+
+```json
+{ "outfit_id": "outfit_7", "saved": true }
+```
+
+There is no unsave in this phase. Nothing in the product removes a look yet, and an endpoint
+with no caller is an endpoint nobody tested.
 
 ## GET /wardrobe/items/{item_id}/extractions
 

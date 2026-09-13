@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.repositories.wardrobe import StoredExtraction, StoredItem
+from app.repositories.wardrobe import StoredExtraction, StoredItem, StoredOutfit
 from app.security.tokens import TokenSigner
+from app.services.compose import AlternativesView
 from app.services.jobs import Job
 from app.services.storage import browser_image_url
 
@@ -72,6 +73,11 @@ def job_payload(job: Job) -> dict[str, Any]:
     The error is included when there is one, because a poller that learns only "failed" has
     to invent its own copy for the card, and the honest message was already written by the
     classifier.
+
+    `result_id` and `result` are how a finished job hands its answer over. A composition
+    that produced a look gives the outfit id to fetch; one that could not gives the named
+    gap inline, because there is no row to point at and "your wardrobe needs a bottom" is
+    an answer rather than an error.
     """
     payload: dict[str, Any] = {
         "job_id": job.job_id,
@@ -79,7 +85,10 @@ def job_payload(job: Job) -> dict[str, Any]:
         "status": job.status.value,
         "stage": job.stage,
         "progress": job.progress,
+        "result_id": job.result_id,
     }
+    if job.result is not None:
+        payload["result"] = job.result
     if job.error_code:
         payload["error"] = {
             "code": job.error_code,
@@ -87,6 +96,82 @@ def job_payload(job: Job) -> dict[str, Any]:
             "retryable": job.retryable,
         }
     return payload
+
+
+def outfit_payload(
+    outfit: StoredOutfit, *, base_url: str, signer: TokenSigner, image_ttl_s: int
+) -> dict[str, Any]:
+    """One composed look, with every slot resolved.
+
+    A slot whose garment was deleted keeps its place with `item: null`. The result screen
+    needs the role to offer a swap for it, and a look that quietly got shorter is the silent
+    gap docs/AI-EVAL-CASES.md Case 14 forbids — the honest answer is to say which piece.
+
+    The advisory keys are listed rather than spread, so the wire shape is the same whatever
+    happens to be in the stored blob.
+    """
+    advisory = outfit.advisory or {}
+    return {
+        "outfit_id": outfit.outfit_id,
+        "name": outfit.name,
+        "occasion": outfit.occasion,
+        # A UX heuristic, labelled as one on screen. Never a fit measurement.
+        "match_score": outfit.match_score,
+        "status": outfit.status,
+        "degradation_level": outfit.degradation_level,
+        "rationale": list(outfit.rationale),
+        "saved": outfit.saved,
+        "missing_roles": outfit.missing_roles,
+        "slots": [
+            {
+                "role": slot.role,
+                "item_id": slot.item_id,
+                "item": (
+                    item_payload(
+                        slot.item, base_url=base_url, signer=signer, image_ttl_s=image_ttl_s
+                    )
+                    if slot.item
+                    else None
+                ),
+            }
+            for slot in outfit.slots
+        ],
+        "confidence": advisory.get("confidence"),
+        "pro_tips": advisory.get("pro_tips", []),
+        "budget_tricks": advisory.get("budget_tricks", []),
+        "wardrobe_gaps": advisory.get("wardrobe_gaps", []),
+        "trend_notes": advisory.get("trend_notes", []),
+    }
+
+
+def alternatives_payload(
+    view: AlternativesView, *, base_url: str, signer: TokenSigner, image_ttl_s: int
+) -> dict[str, Any]:
+    """What else could fill one slot.
+
+    `match_score` is what the *look* would score with that garment in, not what the garment
+    scores alone, and `delta` is the difference from the look as it stands. Both are shown:
+    a swap the user wants for reasons the scorer cannot see is still theirs to make, and
+    hiding a negative delta would be deciding for them.
+    """
+    return {
+        "role": view.role,
+        "current_item_id": view.current_item_id,
+        "alternatives": [
+            {
+                "item": item_payload(
+                    alternative.item,
+                    base_url=base_url,
+                    signer=signer,
+                    image_ttl_s=image_ttl_s,
+                ),
+                "match_score": alternative.match_score,
+                "delta": alternative.delta,
+            }
+            for alternative in view.alternatives
+        ],
+        "gap": view.gap,
+    }
 
 
 def extraction_payload(extraction: StoredExtraction) -> dict[str, Any]:
@@ -107,4 +192,10 @@ def extraction_payload(extraction: StoredExtraction) -> dict[str, Any]:
     }
 
 
-__all__ = ["extraction_payload", "item_payload", "job_payload"]
+__all__ = [
+    "alternatives_payload",
+    "extraction_payload",
+    "item_payload",
+    "job_payload",
+    "outfit_payload",
+]

@@ -174,6 +174,21 @@ class OutfitRow(Base):
     status: Mapped[str] = mapped_column(String(16), default="ready")
     #: Which rung of the ladder produced it. Disclosed, not hidden.
     degradation_level: Mapped[int] = mapped_column(Integer, default=1)
+
+    #: Advisory content as produced — pro tips, budget tricks, gaps, trend notes, the
+    #: advisor's own confidence. One JSON column rather than four, because none of it is
+    #: ever queried: it is read whole, with the look it belongs to. What *is* queried has
+    #: its own column.
+    advisory: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+
+    #: What the user asked for when this look was composed. Stored because a swap rescores
+    #: the look, and `preference_match` is one of the six dimensions — recomputing without
+    #: them would silently neutralise a fifth of the score the moment a slot changed, and
+    #: the number on screen would move for a reason the user could not see.
+    vibe: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fit_preference: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    color_preferences: Mapped[list[str]] = mapped_column(JSON, default=list)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -207,6 +222,36 @@ class OutfitItemRow(Base):
     rank: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class SavedOutfitRow(Base):
+    """A look the user chose to keep.
+
+    Separate from `outfits` rather than a `saved` flag on it, per docs/DATA-MODEL.md. Every
+    composition writes an `outfits` row — it has to, because a swap needs something to swap
+    against — so a flag would mean the table held mostly unsaved rows and "saved" would be
+    the exception the schema was not shaped for. A join table also makes saving idempotent
+    in the schema rather than in a handler: the unique constraint is what makes the second
+    press of the button a no-op.
+    """
+
+    __tablename__ = "saved_outfits"
+    __table_args__ = (
+        # Idempotency, enforced where it cannot be forgotten.
+        UniqueConstraint("user_id", "outfit_id", name="uq_saved_outfits_user_outfit"),
+        # Composite again: a save may only point at the saver's own outfit.
+        ForeignKeyConstraint(
+            ["outfit_id", "user_id"],
+            ["outfits.id", "outfits.user_id"],
+            name="fk_saved_outfits_outfit_same_user",
+        ),
+        Index("ix_saved_outfits_user", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    outfit_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class StyleProfileRow(Base):
     __tablename__ = "style_profiles"
     __table_args__ = (
@@ -232,6 +277,7 @@ __all__ = [
     "ItemExtractionRow",
     "OutfitItemRow",
     "OutfitRow",
+    "SavedOutfitRow",
     "StyleProfileRow",
     "UserRow",
     "WardrobeItemRow",

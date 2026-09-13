@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.security.identity import user_id_from
 from app.security.tokens import TokenError, TokenSigner
+from app.services.compose import OutfitComposer
 from app.services.faults import Fault
 from app.services.ingest import WardrobeIngestService
 from app.services.jobs import InMemoryJobStore
@@ -44,6 +45,12 @@ NO_SESSION = Fault(
     retryable=False,
     status=401,
 )
+#: An outfit the caller does not own reads exactly like one that was never composed. Same
+#: rule as `NOT_FOUND`, different noun — an item message on an outfit route is a small lie
+#: that eventually shows up in a screenshot.
+OUTFIT_NOT_FOUND = Fault(
+    "ITEM_NOT_FOUND", "We couldn't find that look.", retryable=False, status=404
+)
 
 
 def signer(request: Request) -> TokenSigner:
@@ -66,6 +73,10 @@ def ingest(request: Request) -> WardrobeIngestService:
     return request.app.state.ingest
 
 
+def composer(request: Request) -> OutfitComposer:
+    return request.app.state.composer
+
+
 def current_user(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
@@ -84,6 +95,7 @@ def current_user(
 
 
 CurrentUser = Annotated[str, Depends(current_user)]
+Composer = Annotated[OutfitComposer, Depends(composer)]
 Sessions = Annotated["sessionmaker[Session]", Depends(sessions)]
 Ingest = Annotated[WardrobeIngestService, Depends(ingest)]
 Jobs = Annotated[InMemoryJobStore, Depends(jobs)]
@@ -94,6 +106,8 @@ Store = Annotated[ObjectStore, Depends(store)]
 __all__ = [
     "NOT_FOUND",
     "NO_SESSION",
+    "OUTFIT_NOT_FOUND",
+    "Composer",
     "CurrentUser",
     "FaultError",
     "Ingest",
@@ -101,6 +115,7 @@ __all__ = [
     "Sessions",
     "Signer",
     "Store",
+    "composer",
     "current_user",
     "ingest",
     "jobs",

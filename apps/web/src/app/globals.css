@@ -155,6 +155,26 @@ body {
   }
 }
 
+/* Swap settle.
+   One slot changed, so one slot moves. The card that was replaced gets a short spatial
+   settle and every other card is left completely alone — the interaction has to read as
+   changing a single parameter, not as rebuilding the screen (prompts/06).
+   The reduced-motion block above already neutralises this; nothing extra is needed here. */
+@keyframes slot-settle {
+  from {
+    opacity: 0.35;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+[data-slot-settle="true"] > div:first-child {
+  animation: slot-settle var(--duration-spatial) var(--ease-standard);
+}
+
 /* Screen-reader-only, paired with the a11y utilities in src/lib/a11y.ts */
 .sr-only {
   position: absolute;

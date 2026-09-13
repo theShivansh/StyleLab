@@ -10,6 +10,7 @@ Populated in S5, first actually run in S6. Eight tests, three files:
 | `test_model_availability.py` | All three configured model ids resolve against Groq's live model list, plus one cheap connectivity call and one that asserts a too-small token ceiling names itself. Runs the same `verify_models` the app runs at boot — a canary that checks something slightly different from production is a canary that can sing while production suffocates. |
 | `test_real_inference.py` | One real extraction and one real composition. The question no mock can answer: does the live model actually honour the schema we send it? |
 | `test_upload_pipeline.py` | The whole API — routes, ingest, storage, EXIF strip, real analyzer, real transport — over the photographs in `data/samples/`, plus the availability fallback provoked with a retired model id. The criterion S3 deferred. |
+| `test_compose_pipeline.py` | The composition path over the same photographs: a real look from the real text model, the advisor's own schema compliance at the configured token ceiling, and a swap that must complete without touching a provider. |
 
 ## What the first real run found
 
@@ -43,3 +44,27 @@ The extraction tests need real photographs from `data/samples/`, which now holds
 
 Keep this suite small. It is a canary for model deprecation, not a second test suite —
 everything provable with `MockGroqProvider` is proven in `tests/ai/`, free, on every push.
+
+## The account's rate limit, and what this suite does about it
+
+Measured in S7 from live response headers and 429 bodies: 1000 requests and 8000 **input**
+tokens per minute, plus a separate **output** tokens-per-minute ceiling of 1000 per model that
+the headers do not report. The provider refuses on expected output before the model runs
+(`Limit 1000, Requested 1579`), and it refuses smaller ceilings just as readily once the
+minute has been spent — so the binding constraint is concurrency, not the number we send.
+Three photographs uploaded together are three requests against one budget.
+
+Every module passes on its own. The suite as a set exceeded the budget, and the red moved
+between tests depending on which one was running when it ran out. Three changes:
+
+1. `groq_vision_max_tokens` stays at 2048. Lowering it looks like the fix and is not:
+   ceilings of 960, 896 and 800 were refused just as readily once the window was spent, and
+   at 768 the model has no room to reason and returns nothing at all. See docs/DECISIONS.md.
+2. `conftest.VISION_PACING_S` spaces the vision-heavy modules a minute apart. Set
+   `STYLELAB_LIVE_PACING_S=0` on a paid tier.
+3. `capacity.py` turns a capacity refusal into a **skip**, not a failure. A rate limit is not
+   evidence about our schema, and `AI_UNAVAILABLE` is deliberately indistinguishable from an
+   outage at the API boundary — right for the product, unhelpful for a canary.
+
+A full run on this account therefore reports passes and capacity skips. If you need every
+assertion exercised, run the modules one at a time.

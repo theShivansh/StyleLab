@@ -97,10 +97,27 @@ grounding story demonstrable rather than assertable.
 - user_id
 - name
 - occasion
-- match_score
+- match_score          *(Style Match, 0-100. Recomputed from the items by
+                       `app.domain.scoring`, never taken from what the advisor asserted:
+                       two identical wardrobes must not show different figures because a
+                       model felt differently.)*
 - rationale
-- status
+- status               *(`ready` | `incomplete`. `incomplete` when a referenced garment was
+                       deleted — Case 14, never a silent gap.)*
+- degradation_level    *(which rung of the ladder produced it. Disclosed on screen.)*
+- advisory             *(pro tips, budget tricks, gaps, trend notes, the advisor's own
+                       confidence. One JSON column because none of it is ever queried — it
+                       is read whole, with the look. What is queried has its own column.)*
+- vibe                 *(added S7)*
+- fit_preference       *(added S7)*
+- color_preferences    *(added S7)*
 - created_at
+
+The three preference columns are what the look was composed **against**, stored with the
+look rather than joined from `style_profiles`. A swap rescores, and `preference_match` is one
+of the six dimensions: without them a slot change would silently neutralise a fifth of the
+score and the number on screen would move for a reason nobody could explain. A user who
+changes their preferences later has not changed what this outfit was for.
 
 ## outfit_items
 
@@ -115,6 +132,16 @@ grounding story demonstrable rather than assertable.
 - user_id
 - outfit_id
 - created_at
+
+A join table rather than a `saved` flag on `outfits`, and the reason is that every
+composition writes an `outfits` row — it has to, because a swap needs something to swap
+against. A flag would mean the table held mostly unsaved rows with "saved" as the exception
+the schema was not shaped for. It also puts idempotency in the schema: the unique constraint
+on `(user_id, outfit_id)` is what makes the second press of Save a no-op, rather than a
+handler remembering to check.
+
+Composite foreign key to `(outfits.id, outfits.user_id)`, same as `outfit_items`: a save may
+only ever point at the saver's own look.
 
 ## events
 

@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 import pytest
+from capacity import skip_if_at_capacity, tolerating_capacity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = REPO_ROOT / "data" / "samples"
@@ -36,7 +37,7 @@ def _samples(limit: int) -> list[Path]:
 
 
 @pytest.fixture
-def live_api(api_key, tmp_path):
+def live_api(api_key, paced, tmp_path):
     """The real application, with real Groq, over a temporary store and database.
 
     No transport double anywhere. `create_app` is called exactly as production calls it
@@ -97,6 +98,7 @@ def test_the_whole_upload_path_completes_against_live_groq(live_api):
 
     for item in uploaded:
         job = _await_job(live_api, headers, item["job_id"])
+        skip_if_at_capacity(job)
         assert job["status"] == "completed", job
         assert job["stage"] == "ready"
 
@@ -165,9 +167,10 @@ async def test_the_fallback_model_answers_when_the_primary_cannot(transport, set
         max_tokens=settings.groq_vision_max_tokens,
     )
 
-    outcome = await analyzer.analyze_with_audit(
-        GarmentImage(asset_id="live", storage_key=sample.name)
-    )
+    with tolerating_capacity():
+        outcome = await analyzer.analyze_with_audit(
+            GarmentImage(asset_id="live", storage_key=sample.name)
+        )
 
     assert outcome.extraction.category is not None
     assert outcome.used_fallback is True

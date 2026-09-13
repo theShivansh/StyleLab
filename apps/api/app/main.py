@@ -42,6 +42,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.adapters.boot import default_transport, verify_models
+from app.adapters.groq_text import GroqOutfitAdvisor
 from app.adapters.groq_vision import GroqWardrobeAnalyzer
 from app.adapters.transport import ChatTransport
 from app.config import get_settings
@@ -50,9 +51,11 @@ from app.deps import FaultError
 from app.logging_setup import install_log_redaction
 from app.routers import assets as assets_router
 from app.routers import jobs as jobs_router
+from app.routers import outfits as outfits_router
 from app.routers import session as session_router
 from app.routers import wardrobe as wardrobe_router
 from app.security.tokens import TokenSigner
+from app.services.compose import OutfitComposer
 from app.services.ingest import UploadLimits, WardrobeIngestService
 from app.services.jobs import BackgroundJobs, InMemoryJobStore
 from app.services.storage import InlineImageSource, LocalObjectStore, ObjectStore
@@ -143,6 +146,22 @@ def create_app(
             ),
         )
 
+        app.state.composer = OutfitComposer(
+            sessions=app.state.sessions,
+            advisor=GroqOutfitAdvisor(
+                app.state.transport,
+                model=settings.groq_text_model,
+                max_tokens=settings.agent_max_output_tokens,
+            ),
+            jobs=app.state.jobs,
+            background=app.state.background,
+            # No trend source yet: the corpus is blocker B8 and lands with the crew in S8b.
+            # `None` costs a rung (2) and is disclosed as one, which is the honest state of
+            # affairs — a source that returned nothing would report full depth for advice
+            # that had no trend input.
+            trend_source=None,
+        )
+
         yield
 
         # Let outstanding extractions finish rather than cutting them mid-provider-call: a
@@ -203,6 +222,7 @@ def create_app(
 
     app.include_router(session_router.router, prefix=API_PREFIX)
     app.include_router(wardrobe_router.router, prefix=API_PREFIX)
+    app.include_router(outfits_router.router, prefix=API_PREFIX)
     app.include_router(jobs_router.router, prefix=API_PREFIX)
     app.include_router(assets_router.router, prefix=API_PREFIX)
 

@@ -15,7 +15,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S4 | Wardrobe domain | 04 | done | (this commit) | L T U AI | Cross-user isolation red→green, then verified by 3 mutations (12 / 4 / 1 tests red). 109 api + 4 ai-eval tests. |
 | S5 | Groq adapter | 12 | done | (this commit) | L T U AI | Live adapters + transport seam. Mock replaces the transport, so real prompt/parse/retry/fallback run. 2 mutations verified. 259 tests. |
 | S6 | Upload + analysis pipeline | 05 | done | (this commit) | L T U I E B AI | Live path verified end to end against real Groq on real photographs. EXIF+GPS strip, checksum cache, soft-delete cascade, signed image capabilities, named job stages. 8 mutations run. 424 api + 14 ai-eval + 8 live + 48 web tests. Found and fixed two S5 schema bugs no mock could see. |
-| S7 | Result + swap | 06 | todo | — | — | |
+| S7 | Result + swap | 06 | done | (this commit) | L T U I E B AI | Compose is an async job, swap is synchronous and calls no model. Result screen, alternatives scored in the look, save, share-as-text. 9 mutations, 9 caught. 463 api + 14 ai-eval + 57 web unit + 54 e2e (desktop + mobile). Live: a real look composed from real photographs against Groq. Measured the account's output-token limit and opened B17. |
 | S8 | AI eval harness | 10 | todo | — | — | |
 | S8b | Agent crew + trends | 14 | todo | — | — | multi-agent advisory layer |
 | S9 | Planner + analytics | 07 | todo | — | — | P1, cuttable |
@@ -44,15 +44,20 @@ key, so it is a local-and-main gate rather than a per-push one.
       user's own garment photos.
 - [x] B5 — RESOLVED 2026-09-12. Vision primary qwen/qwen3.8-27b, fallback
       qwen/qwen3.6-27b (availability only, never for quality). See docs/DECISIONS.md.
-- [ ] B6 — Cold start. **Materially reduced by S6, not closed.** The live upload path is
-      verified end to end and the three photographs in `data/samples/` extract correctly, so
-      the risk is now latency and network rather than "does it work". Two things still to do
-      before a live demo:
+- [ ] B6 — Cold start. **Materially reduced by S6, and sharpened by S7.** The live path now
+      runs end to end — upload, extract, compose, swap — so the risk is no longer "does it
+      work". Three things still to do before a live demo:
         1. **Set `SESSION_SECRET`.** Without it the API signs with a per-process key, so a
            pre-seeded demo wardrobe becomes unreachable the moment the process restarts —
            which is exactly what happens when someone reloads a dev server mid-demo. Found
            the hard way while verifying S6 in the browser.
-        2. Rehearse and time the live path; hold the budget in docs/DEMO-SCRIPT.md.
+        2. **Do not upload six photographs at once on this account.** S7 measured the tier's
+           limits (B17): concurrent extractions exceed the per-minute output budget and the
+           provider refuses some of them. The product handles it correctly — one card fails
+           with a retry, and composition names the gap rather than inventing a garment — but
+           an interviewer would watch two cards fail. Pre-seed the wardrobe, or upload in
+           twos with a pause.
+        3. Rehearse and time the live path; hold the budget in docs/DEMO-SCRIPT.md.
 - [x] B7 — CLOSED 2026-09-12. Key provisioned by the user in `.env`. It immediately paid
       for itself: the first real run of `tests/live` failed three ways, and two were
       genuine S5 bugs that **no mock could have caught** — a strict-mode schema Groq
@@ -92,6 +97,21 @@ key, so it is a local-and-main gate rather than a per-push one.
       rather than from the request, so no caller can choose whose wardrobe to read. Supabase
       auth in S11 replaces the minting and changes nothing else. Also: set `SESSION_SECRET`
       in any environment where sessions must survive a restart or a second instance (B6).
+- [ ] B17 — Provider tier limits. Measured in S7 from a live response header plus the 429
+      body: 1000 requests/minute and 8000 **input** tokens/minute, alongside a separate
+      **output** tokens-per-minute ceiling of 1000 per model that the headers do not report.
+      Three consequences, two already addressed:
+        1. Lowering `groq_vision_max_tokens` looked like the fix and is not — tried,
+           measured, reverted to 2048. Smaller ceilings are refused just as readily once the
+           minute is spent, and at 768 the model has no room to reason and returns nothing.
+           Recorded in docs/DECISIONS.md so nobody repeats it. **Closed as a wrong turn.**
+        2. `tests/live/` paces its vision-heavy modules and skips on a capacity refusal
+           rather than failing, since a rate limit is not evidence about our schema. **Done.**
+        3. Still open: the documented primary flow uploads three to six photographs in one
+           gesture, concurrently, and on this tier some of those calls are refused. The
+           product degrades correctly (per-card failure, retry offered, honest gap) but the
+           experience is worse than it should be. Either a paid tier or client-side batching
+           of concurrent uploads — decide before the demo (B6).
 - [ ] B16 — Uploaded images are only ever soft-deleted. `deleted_at` is set on the item and
       the asset and the file stops being served, but the bytes stay on disk — deliberate,
       because docs/DATA-MODEL.md wants deletion reversible by support. A retention timer

@@ -20,8 +20,9 @@ reach a row cannot mutate one by accident, and the domain stays free of SQLAlche
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
@@ -33,6 +34,7 @@ from app.db.models import (
     ItemExtractionRow,
     OutfitItemRow,
     OutfitRow,
+    SavedOutfitRow,
     UserRow,
     WardrobeItemRow,
 )
@@ -46,7 +48,9 @@ from app.domain.models import (
     WardrobeItem,
 )
 
-_Owned = TypeVar("_Owned", AssetRow, WardrobeItemRow, OutfitRow, OutfitItemRow)
+_Owned = TypeVar(
+    "_Owned", AssetRow, WardrobeItemRow, OutfitRow, OutfitItemRow, SavedOutfitRow
+)
 
 
 def _scoped_select(user_id: str, row: type[_Owned]) -> Select[tuple[_Owned]]:
@@ -130,6 +134,25 @@ def _write_extraction(row: WardrobeItemRow, item: WardrobeItem) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class OutfitSlot:
+    """One role in a composed look, and whatever is currently filling it.
+
+    `item` is `None` when the garment was deleted after the look was composed. The slot
+    survives the deletion on purpose: the result screen has to say *which* piece went
+    missing and offer a swap for that role, which it cannot do from a shorter list
+    (docs/AI-EVAL-CASES.md Case 14).
+    """
+
+    role: str
+    item_id: str
+    item: StoredItem | None
+
+    @property
+    def filled(self) -> bool:
+        return self.item is not None
+
+
+@dataclass(frozen=True, slots=True)
 class StoredOutfit:
     outfit_id: str
     user_id: str
@@ -140,6 +163,20 @@ class StoredOutfit:
     status: str
     degradation_level: int
     item_ids: list[str]
+    #: Pro tips, budget tricks, gaps, trend notes — read whole, never queried.
+    advisory: dict[str, Any] = field(default_factory=dict)
+    #: The preferences this look was composed against, kept so a swap can rescore it the
+    #: same way it was scored the first time.
+    vibe: str | None = None
+    fit_preference: str | None = None
+    color_preferences: list[str] = field(default_factory=list)
+    slots: list[OutfitSlot] = field(default_factory=list)
+    saved: bool = False
+
+    @property
+    def missing_roles(self) -> list[str]:
+        """Roles whose garment is gone. Empty for a look that is still whole."""
+        return [slot.role for slot in self.slots if not slot.filled]
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,6 +449,10 @@ class WardrobeRepository:
         match_score: int = 0,
         rationale: Sequence[str] = (),
         degradation_level: int = 1,
+        advisory: dict[str, Any] | None = None,
+        vibe: str | None = None,
+        fit_preference: str | None = None,
+        color_preferences: Sequence[str] = (),
     ) -> StoredOutfit:
         """Persist a composed outfit.
 
@@ -419,9 +460,13 @@ class WardrobeRepository:
         `app.db.models`. Two independent defences on purpose: this is the one rule the
         product rests on, and a check in application code is only as good as the next
         person's memory.
+
+        The preferences are stored with the look rather than derived later. A swap rescores
+        what the user is looking at, and it has to score it against the same question that
+        was asked the first time.
         """
-        owned = {item.item_id for item in self.candidates(user_id)}
-        foreign = [item_id for item_id in item_ids if item_id not in owned]
+        by_id = {item.item_id: item for item in self.candidates(user_id)}
+        foreign = [item_id for item_id in item_ids if item_id not in by_id]
         if foreign:
             raise ValueError(f"not owned by {user_id}: {', '.join(sorted(foreign))}")
 
@@ -434,9 +479,18 @@ class WardrobeRepository:
                 match_score=match_score,
                 rationale=list(rationale),
                 degradation_level=degradation_level,
+                advisory=dict(advisory or {}),
+                vibe=vibe,
+                fit_preference=fit_preference,
+                color_preferences=list(color_preferences),
             )
         )
-        by_id = {item.item_id: item for item in self.candidates(user_id)}
+        # The parent row goes in first, explicitly. `outfit_items` points at `outfits` with
+        # a composite foreign key, so a join row written before its outfit is refused by the
+        # database. This used to happen by accident — a second candidates() query autoflushed
+        # the outfit on its way past — which is an ordering guarantee nobody could see.
+        self._session.flush()
+
         for rank, item_id in enumerate(item_ids):
             role = by_id[item_id].extraction.category
             self._session.add(
@@ -455,17 +509,45 @@ class WardrobeRepository:
         return stored
 
     def get_outfit(self, user_id: str, outfit_id: str) -> StoredOutfit | None:
+        """One look, with each slot resolved to the garment currently filling it.
+
+        A slot whose garment has since been deleted comes back with `item=None` rather than
+        being dropped. The result screen needs the role to offer a swap for it, and a look
+        that quietly got shorter is the silent gap Case 14 forbids.
+        """
         row = self._session.execute(
             _scoped_select(user_id, OutfitRow).where(OutfitRow.id == outfit_id)
         ).scalar_one_or_none()
         if row is None:
             return None
 
-        joins = self._session.execute(
-            _scoped_select(user_id, OutfitItemRow)
-            .where(OutfitItemRow.outfit_id == outfit_id)
-            .order_by(OutfitItemRow.rank)
-        ).scalars()
+        joins = list(
+            self._session.execute(
+                _scoped_select(user_id, OutfitItemRow)
+                .where(OutfitItemRow.outfit_id == outfit_id)
+                .order_by(OutfitItemRow.rank)
+            ).scalars()
+        )
+        item_ids = [join.wardrobe_item_id for join in joins]
+
+        live = {}
+        if item_ids:
+            rows = self._session.execute(
+                _scoped_select(user_id, WardrobeItemRow).where(
+                    WardrobeItemRow.id.in_(item_ids),
+                    WardrobeItemRow.deleted_at.is_(None),
+                )
+            ).scalars()
+            live = {row_.id: _to_stored(row_) for row_ in rows}
+
+        saved = (
+            self._session.execute(
+                _scoped_select(user_id, SavedOutfitRow).where(
+                    SavedOutfitRow.outfit_id == outfit_id
+                )
+            ).scalars().first()
+            is not None
+        )
 
         return StoredOutfit(
             outfit_id=row.id,
@@ -476,8 +558,98 @@ class WardrobeRepository:
             rationale=list(row.rationale or []),
             status=row.status,
             degradation_level=row.degradation_level,
-            item_ids=[join.wardrobe_item_id for join in joins],
+            item_ids=item_ids,
+            advisory=dict(row.advisory or {}),
+            vibe=row.vibe,
+            fit_preference=row.fit_preference,
+            color_preferences=list(row.color_preferences or []),
+            slots=[
+                OutfitSlot(
+                    role=join.role,
+                    item_id=join.wardrobe_item_id,
+                    item=live.get(join.wardrobe_item_id),
+                )
+                for join in joins
+            ],
+            saved=saved,
         )
+
+    def swap_slot(
+        self,
+        user_id: str,
+        outfit_id: str,
+        *,
+        role: str,
+        replacement_item_id: str,
+        match_score: int,
+        status: str,
+        rationale: Sequence[str],
+        advisory: dict[str, Any],
+    ) -> bool:
+        """Point one role at a different garment. Returns False when the slot is not there.
+
+        One row is rewritten and the rest are not touched, which is the persistence half of
+        the product promise: changing one item changes one item. The caller supplies the new
+        score because scoring is the domain's job, not the repository's.
+        """
+        join = self._session.execute(
+            _scoped_select(user_id, OutfitItemRow).where(
+                OutfitItemRow.outfit_id == outfit_id, OutfitItemRow.role == role
+            )
+        ).scalar_one_or_none()
+        if join is None:
+            return False
+
+        outfit = self._session.execute(
+            _scoped_select(user_id, OutfitRow).where(OutfitRow.id == outfit_id)
+        ).scalar_one_or_none()
+        if outfit is None:
+            return False
+
+        # The replacement has to be a live garment of this user's. The composite foreign key
+        # would refuse a cross-user write anyway; this makes it a 404 instead of a 500.
+        if self._row(user_id, replacement_item_id) is None:
+            return False
+
+        join.wardrobe_item_id = replacement_item_id
+        outfit.match_score = match_score
+        outfit.status = status
+        # The narration is rewritten, not kept. Both the rationale and the advisory content
+        # were written about a combination that no longer exists, and a tip about the
+        # trouser the user just swapped out is worse than no tip at all — it is the visual
+        # state disagreeing with the wardrobe state, in prose.
+        outfit.rationale = list(rationale)
+        outfit.advisory = dict(advisory)
+        self._session.flush()
+        return True
+
+    def mark_saved(self, user_id: str, outfit_id: str) -> bool:
+        """Keep a look. Idempotent — a second press is a no-op, not a second row.
+
+        Returns False when the outfit is not this user's, so the route can answer 404
+        without a second lookup.
+        """
+        outfit = self._session.execute(
+            _scoped_select(user_id, OutfitRow).where(OutfitRow.id == outfit_id)
+        ).scalar_one_or_none()
+        if outfit is None:
+            return False
+
+        existing = self._session.execute(
+            _scoped_select(user_id, SavedOutfitRow).where(
+                SavedOutfitRow.outfit_id == outfit_id
+            )
+        ).scalars().first()
+        if existing is not None:
+            return True
+
+        self._session.add(
+            SavedOutfitRow(
+                id=f"saved_{uuid.uuid4().hex[:16]}", user_id=user_id, outfit_id=outfit_id
+            )
+        )
+        self._session.flush()
+        return True
 
     # --- internals ---------------------------------------------------------------------
 
@@ -667,6 +839,7 @@ __all__ = [
     "AssetRepository",
     "DeletionResult",
     "ExtractionAuditRepository",
+    "OutfitSlot",
     "StoredAsset",
     "StoredExtraction",
     "StoredItem",

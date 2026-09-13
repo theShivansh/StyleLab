@@ -30,6 +30,7 @@ from app.domain.models import (
     WardrobeItem,
 )
 from app.domain.models import GarmentCategory as C
+from capacity import skip_if_the_fallback_covered_capacity, tolerating_capacity
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLES = REPO_ROOT / "data" / "samples"
@@ -65,7 +66,7 @@ def _sample() -> Path:
 
 
 @pytest.mark.smoke
-async def test_a_real_extraction_satisfies_the_schema(transport, settings):
+async def test_a_real_extraction_satisfies_the_schema(transport, settings, paced):
     """The claim the whole product rests on: a real photo becomes structured data."""
     sample = _sample()
     analyzer = GroqWardrobeAnalyzer(
@@ -75,9 +76,10 @@ async def test_a_real_extraction_satisfies_the_schema(transport, settings):
         urls=DataUrls(sample),
     )
 
-    outcome = await analyzer.analyze_with_audit(
-        GarmentImage(asset_id="live", storage_key=sample.name)
-    )
+    with tolerating_capacity():
+        outcome = await analyzer.analyze_with_audit(
+            GarmentImage(asset_id="live", storage_key=sample.name)
+        )
 
     assert outcome.extraction.category is not None
     # Per-field confidence is the honesty signal. A model returning none of it would pass
@@ -85,6 +87,7 @@ async def test_a_real_extraction_satisfies_the_schema(transport, settings):
     assert outcome.extraction.field_confidence, "no per-field confidence came back"
     assert all(0.0 <= score <= 1.0 for score in outcome.extraction.field_confidence.values())
     # And it should not have needed the availability fallback on a healthy day.
+    skip_if_the_fallback_covered_capacity(outcome)
     assert outcome.used_fallback is False
 
 

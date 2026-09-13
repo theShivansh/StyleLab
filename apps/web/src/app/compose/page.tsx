@@ -4,8 +4,10 @@ import Link from "next/link";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
+import { track } from "@/lib/analytics";
 import { config } from "@/lib/config";
 import { garmentCategory } from "@/lib/schemas/wardrobe";
+import { useComposition } from "@/lib/use-composition";
 import { useWardrobe } from "@/lib/wardrobe-store";
 
 /**
@@ -15,9 +17,14 @@ import { useWardrobe } from "@/lib/wardrobe-store";
  * straight through still reaches an outfit. The defaults live in the store rather than in
  * this component so "skipped" and "accepted the default" are the same state downstream.
  *
- * The result screen is S7. What this phase owns is the honest gap state: when the wardrobe
- * cannot fill the requested roles, name what is missing instead of inventing it
- * (docs/USER-FLOWS.md Flow 5).
+ * Live as of S7: the button starts a real composition, the wait shows the server's own named
+ * stages, and a finished look replaces this screen with the result.
+ *
+ * The gap state is asserted twice on purpose. This screen already knows, from the wardrobe it
+ * has, when a role is empty — so it says so before spending a request. The server checks again
+ * against the wardrobe as it actually is, and answers with a named gap rather than an error
+ * (docs/USER-FLOWS.md Flow 5). The client-side check is a courtesy; the server's is the one
+ * that decides.
  */
 
 const OCCASIONS = ["everyday", "work", "evening", "campus", "weekend"] as const;
@@ -26,12 +33,14 @@ const FITS = ["slim", "regular", "relaxed", "oversized"] as const;
 const REQUIRED_ROLES = ["top", "bottom", "footwear"] as const;
 
 export default function ComposePage() {
+  const { state, stage, gap, error, start } = useComposition();
   const preferences = useWardrobe((s) => s.preferences);
   const touched = useWardrobe((s) => s.preferencesTouched);
   const setPreferences = useWardrobe((s) => s.setPreferences);
   const resetPreferences = useWardrobe((s) => s.resetPreferences);
   const items = useWardrobe((s) => s.items);
 
+  const busy = state === "composing";
   const ready = items.filter((i) => i.status === "ready");
   const present = new Set(ready.map((i) => i.category));
   const missing = REQUIRED_ROLES.filter((role) => !present.has(role));
@@ -116,16 +125,64 @@ export default function ComposePage() {
               Add {formatRoles(missing)}
             </ButtonLink>
           </Card>
+        ) : state === "gap" ? (
+          // The server's answer, not ours: it looked at the wardrobe as it is now and could
+          // not fill a role. Nothing is substituted, and the missing piece is named.
+          <Card className="p-6">
+            <h2 className="text-title">
+              {gap && gap.missing_roles.length > 0
+                ? `You have no ${formatRoles(gap.missing_roles)} yet`
+                : "Not enough to build a look yet"}
+            </h2>
+            {gap?.wardrobe_gaps.map((entry) => (
+              <p key={entry.category} className="text-ink-muted mt-2 text-sm">
+                Add {entry.generic_description} and this look finishes itself.
+              </p>
+            ))}
+            <ButtonLink href="/wardrobe" size="lg" className="mt-5">
+              Add garments
+            </ButtonLink>
+          </Card>
         ) : (
           <Card className="p-6">
             <h2 className="text-title">Ready to compose</h2>
             <p className="text-ink-muted mt-2 text-sm">
-              {ready.length} garments, every role covered. Styling arrives in the next build
-              phase — the crew that reasons about these looks is not wired up yet.
+              {ready.length} garments, every role covered.
             </p>
-            <Button size="lg" className="mt-5" disabled>
-              Compose outfit
+
+            {error && (
+              <p className="text-danger mt-3 text-sm" role="alert">
+                {error}
+              </p>
+            )}
+
+            <Button
+              size="lg"
+              className="mt-5"
+              disabled={busy}
+              onClick={() => {
+                track("compose_clicked", {
+                  items: ready.length,
+                  occasion: preferences.occasion,
+                });
+                void start({
+                  occasion: preferences.occasion,
+                  vibe: preferences.vibe,
+                  fitPreference: preferences.fitPreference,
+                  colorPreferences: preferences.colorPreferences,
+                });
+              }}
+            >
+              {busy ? "Composing…" : error ? "Try again" : "Compose outfit"}
             </Button>
+
+            {busy && (
+              // The server's stage, verbatim. Named work, never a bare spinner
+              // (CLAUDE.md motion rules).
+              <p className="text-ink-muted mt-3 text-sm" role="status" aria-live="polite">
+                {stage ?? "reading your wardrobe"}…
+              </p>
+            )}
           </Card>
         )}
       </div>

@@ -6,6 +6,9 @@ import { z } from "zod";
  * Note what is absent and must stay absent: brand, price, commerce_url, active. The product
  * sells nothing (docs/DECISIONS.md, 2026-09-12). If one of those reappears here, commerce
  * has crept back in through the type layer.
+ *
+ * Outfits, slots, alternatives and trend notes live in `schemas/outfit.ts` as of S7, when
+ * they stopped being a guess about a future payload and became a contract with a live one.
  */
 
 export const garmentCategory = z.enum(["top", "bottom", "footwear", "outerwear", "accessory"]);
@@ -63,6 +66,14 @@ export const jobStatusSchema = z.object({
   stage: z.string().nullable(),
   progress: z.number().min(0).max(1).nullable(),
   /**
+   * What the job produced: an item id for an extraction, an outfit id for a composition.
+   * Null until it finishes, and null on a composition that named a gap instead — there is
+   * no row to point at, and `result` carries the answer in that case.
+   */
+  result_id: z.string().nullable().default(null),
+  /** A terminal payload for a job whose answer is not a row. See `schemas/outfit.ts`. */
+  result: z.unknown().optional(),
+  /**
    * Present on failure. Carried so a card can say what went wrong and whether retrying is
    * worth the user's time — the message was already written honestly server-side, and
    * inventing a second one here would be worse copy about a failure we know less about.
@@ -75,60 +86,6 @@ export const jobStatusSchema = z.object({
     })
     .optional(),
 });
-
-/** Trend notes without source and date are dropped server-side; the schema enforces it here too. */
-export const trendNoteSchema = z.object({
-  trend: z.string(),
-  source: z.string().min(1),
-  published_at: z.string(),
-  applies_to_items: z.array(z.string()).default([]),
-});
-
-export const outfitAdviceSchema = z.object({
-  outfit: z
-    .object({
-      item_ids: z.array(z.string()),
-      name: z.string(),
-      occasion: z.string(),
-      match_score: z.number().min(0).max(100),
-    })
-    .nullable(),
-  rationale: z.array(z.string()).default([]),
-  confidence: z.number().min(0).max(1).nullable().default(null),
-  critique: z
-    .object({
-      considered: z.array(z.string()).default([]),
-      tradeoffs: z.array(z.string()).default([]),
-    })
-    .nullable()
-    .default(null),
-  pro_tips: z
-    .array(z.object({ tip: z.string(), type: z.enum(["styling", "proportion", "care"]) }))
-    .default([]),
-  alternatives: z
-    .array(z.object({ swap_role: garmentCategory, item_id: z.string(), why: z.string() }))
-    .default([]),
-  combinations: z
-    .array(z.object({ item_ids: z.array(z.string()), occasion: z.string(), name: z.string() }))
-    .default([]),
-  budget_tricks: z
-    .array(z.object({ trick: z.string(), unlocks_outfits: z.number().int().nonnegative() }))
-    .default([]),
-  wardrobe_gaps: z
-    .array(
-      z.object({
-        category: garmentCategory,
-        generic_description: z.string(),
-        unlocks_outfits: z.number().int().nonnegative(),
-      }),
-    )
-    .default([]),
-  trend_notes: z.array(trendNoteSchema).default([]),
-  /** 1 = full crew, 5 = honest gap statement. docs/AGENT-SYSTEM.md. */
-  degradation_level: z.number().int().min(1).max(5).default(1),
-  missing_roles: z.array(garmentCategory).default([]),
-});
-export type OutfitAdvice = z.infer<typeof outfitAdviceSchema>;
 
 /** True when a field should be presented as a hedge rather than a fact. */
 export function isHedged(item: WardrobeItem, field: string, floor: number): boolean {

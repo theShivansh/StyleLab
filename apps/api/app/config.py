@@ -34,6 +34,25 @@ class Settings(BaseSettings):
     #: a reasoning-capable model spends its budget thinking first, so too low a ceiling
     #: returns an *empty* response rather than a short one. `groq_transport._to_result` names
     #: that case; `tests/live/test_model_availability.py` holds it to it.
+    #:
+    #: Stays at 2048. S7 tried lowering it, measured, and put it back — the note is here so
+    #: nobody spends the afternoon again.
+    #:
+    #: The account's on-demand tier caps **output tokens per minute, per model**, at 1000,
+    #: and refuses requests whose expected output exceeds what the minute has left
+    #: (`Limit 1000, Requested 1579`). It looks like the ceiling is the lever. It is not:
+    #: ceilings of 960, 896 and 800 were refused just as readily once the window was spent,
+    #: so the refusal tracks the *remaining budget*, not the number we send.
+    #:
+    #: What lowering it does do is take away the model's room to think. At 768 the request is
+    #: admitted and comes back `json_validate_failed` with nothing generated — the same
+    #: reasoning-budget failure S6 found at 32, arriving as a burned call and a failed card
+    #: rather than as a retryable refusal. A ceiling that fails *after* admission is strictly
+    #: worse than one that is sometimes refused before it.
+    #:
+    #: So: 2048, and the tier is the thing to fix (blocker B17). A real extraction uses only
+    #: ~205 output tokens (823 characters, measured) — the rest of this budget is the space
+    #: the model reasons in before it writes any of them.
     groq_vision_max_tokens: int = 2048
 
     # --- Agent crew (docs/AGENT-SYSTEM.md) ---

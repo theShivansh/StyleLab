@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,33 @@ def api_key() -> str:
     if not key or key.startswith("test-key"):
         pytest.skip("no real GROQ_API_KEY in the environment or .env; live suite skipped")
     return key
+
+
+#: Seconds to wait before a module that spends its budget on vision calls.
+#:
+#: Measured on this account (headers from a live call, S7): 1000 requests/minute and 8000
+#: **input** tokens/minute, alongside a separate **output** tokens-per-minute ceiling of
+#: 1000 per model that the headers do not report. Our vision ceiling is 2048, so a single
+#: extraction can ask for more output than the whole minute allows, and the provider then
+#: refuses it up front on *expected* output: "Limit 1000, Requested 1579", before the model
+#: runs at all.
+#:
+#: Every module passes on its own; the suite failed as a set, with the red landing on
+#: whichever test was running when the budget ran out. Pacing is not papering over a race —
+#: the wait *is* the rate limit, and a minute is the provider's window.
+VISION_PACING_S = float(os.environ.get("STYLELAB_LIVE_PACING_S", "60"))
+
+
+@pytest.fixture(scope="module")
+def paced(api_key):
+    """Wait out the provider's per-minute output budget before a vision-heavy module.
+
+    Set `STYLELAB_LIVE_PACING_S=0` on a paid tier, where the limit this exists for does not
+    bind. Left at its default everywhere else, because a suite that fails on the account it
+    is actually run against is a suite people stop running.
+    """
+    if VISION_PACING_S > 0:
+        time.sleep(VISION_PACING_S)
 
 
 @pytest.fixture

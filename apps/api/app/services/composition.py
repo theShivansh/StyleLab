@@ -42,6 +42,7 @@ from app.domain.models import (
     OutfitAdvice,
     TrendNote,
     TrendQuery,
+    WardrobeItem,
 )
 from app.domain.ranker import DeterministicRanker
 from app.domain.scoring import match_score
@@ -74,7 +75,12 @@ class CompositionService:
     request-scoped evidence rather than shared state.
     """
 
-    repository: WardrobeRepository
+    #: `None` when the caller retrieves the candidates itself and passes them to `compose`.
+    #: The async job runner does exactly that: this method awaits a provider call, and a
+    #: repository held across that await is a database connection checked out for the
+    #: length of an HTTP request to Groq (`app/services/compose.py`, and the same rule
+    #: `app/services/ingest.py` follows for extraction).
+    repository: WardrobeRepository | None
     advisor: OutfitAdvisor
     ranker: DeterministicRanker = field(default_factory=DeterministicRanker)
     trend_source: TrendSource | None = None
@@ -89,11 +95,16 @@ class CompositionService:
         fit_preference: str | None = None,
         color_preferences: Sequence[str] = (),
         required_roles: Sequence[GarmentCategory] = CORE_ROLES,
+        candidates: Sequence[WardrobeItem] | None = None,
     ) -> OutfitAdvice:
         required = tuple(required_roles)
 
-        # 1 — scoped retrieval. The grounding guarantee starts here, in SQL.
-        candidates = self.repository.candidates(user_id)
+        # 1 — scoped retrieval. The grounding guarantee starts here, in SQL — including
+        #     when the caller did the retrieving: `candidates` may only ever arrive from
+        #     `WardrobeRepository.candidates`, which is the one query that names the owner.
+        candidates = (
+            list(candidates) if candidates is not None else self._retrieve(user_id)
+        )
 
         # 2 — no complete outfit is possible, so there is nothing to deliberate about.
         #     The advisor is not called at all: paying for a crew run to be told what a
@@ -163,6 +174,11 @@ class CompositionService:
         return self._rescore(cleaned, request, degradation)
 
     # --- internals ---------------------------------------------------------------------
+
+    def _retrieve(self, user_id: str) -> list[WardrobeItem]:
+        if self.repository is None:
+            raise ValueError("compose() needs either a repository or a candidate set")
+        return self.repository.candidates(user_id)
 
     async def _trend_notes(
         self, required: Sequence[GarmentCategory]

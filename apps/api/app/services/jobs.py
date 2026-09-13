@@ -61,20 +61,38 @@ STAGES: tuple[str, ...] = (
     "ready",
 )
 
+#: Composition stages, also verbatim from CLAUDE.md. A separate sequence because they
+#: describe different work: an extraction reads one photograph, a composition reads a
+#: wardrobe. Sharing one list would mean showing "finding garment" while ranking outfits.
+COMPOSE_STAGES: tuple[str, ...] = (
+    "reading your wardrobe",
+    "matching silhouettes",
+    "balancing palette",
+    "building look",
+    "ready",
+)
+
+#: Both sequences, searched in order. They share "ready" and nothing else; since it is last
+#: in each and both are the same length, the progress it maps to is the same either way.
+_SEQUENCES: tuple[tuple[str, ...], ...] = (STAGES, COMPOSE_STAGES)
+
 
 def stage_progress(stage: str | None) -> float | None:
     """Fraction complete, derived from the named stage.
 
     Derived rather than stored: a separate `progress` field and a stage name are two claims
     about the same thing, and the one the user reads is the name.
+
+    Looked up across both sequences rather than passed the job type, because the stage name
+    is already unambiguous and threading the type through would let a caller ask for the
+    progress of a stage against the wrong sequence.
     """
     if stage is None:
         return None
-    try:
-        index = STAGES.index(stage)
-    except ValueError:
-        return None
-    return round((index + 1) / len(STAGES), 2)
+    for sequence in _SEQUENCES:
+        if stage in sequence:
+            return round((sequence.index(stage) + 1) / len(sequence), 2)
+    return None
 
 
 def new_job_id() -> str:
@@ -96,8 +114,14 @@ class Job:
     type: JobType
     status: JobStatus = JobStatus.QUEUED
     stage: str | None = None
-    #: What the job produced, for the client to fetch. An item id for `analyze_item`.
+    #: What the job produced, for the client to fetch. An item id for `analyze_item`, an
+    #: outfit id for `compose_outfit`.
     result_id: str | None = None
+    #: A small terminal payload for a job whose answer is not a row. `compose_outfit` uses
+    #: it for the insufficient-wardrobe case: there is no outfit to fetch, and naming the
+    #: gap is the answer rather than an error. Left `None` by `analyze_item`, which always
+    #: has an item id to point at.
+    result: dict[str, object] | None = None
     error_code: str | None = None
     error_message: str | None = None
     retryable: bool = False
@@ -206,6 +230,7 @@ async def _guarded(factory: Callable[[], Awaitable[None]], name: str) -> None:
 
 
 __all__ = [
+    "COMPOSE_STAGES",
     "STAGES",
     "BackgroundJobs",
     "InMemoryJobStore",

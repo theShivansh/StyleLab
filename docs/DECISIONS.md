@@ -1301,3 +1301,226 @@ The missed one is recorded rather than quietly re-scoped. It is not a coverage h
 is no mutation of that line which changes the output, because the line has no effect on this
 version of Pillow. The property it was supposed to protect is guarded by the output-byte
 assertions, which the realistic mutation does turn red.
+
+---
+
+# S7 — Result + swap (2026-09-13)
+
+## Composing is a job; swapping is not
+
+Both could have been either. They went opposite ways for the same reason: what is actually
+on the other side of the call.
+
+Composing reaches a provider. Today that is one text call; in S8b it is a crew behind the
+same Protocol, and slower. A route that blocked now would have to change then, and every
+client written against it with it. So `POST /outfits/compose` answers 202 with a job, the
+stages come from CLAUDE.md's motion vocabulary, and the client polls the same
+`GET /jobs/{id}` the upload screen already uses.
+
+Swapping reaches nothing. It is a scoped read, a pure recompute over six dimensions, and one
+row rewritten. Routing it through a queue and a poller to do arithmetic would make the
+signature interaction — one slot changes, the rest stay still — the slowest thing on the
+screen. It is synchronous because it is fast, and it is fast because the model is not in the
+loop. `tests/live/test_compose_pipeline.py` asserts a live swap completes in under two
+seconds, which is a ceiling an accidental model call could not fit under.
+
+## Three of the five composition stages are emitted, not five
+
+CLAUDE.md names five: reading your wardrobe → matching silhouettes → balancing palette →
+building look → ready. This rung emits the first, the fourth and the last, because that is
+how many separable pieces of work it does — read the wardrobe, ask the advisor, done.
+
+"Matching silhouettes" and "balancing palette" happen *inside* the single advisor call at
+this rung. Emitting them anyway would have been two stage transitions firing microseconds
+apart, which is a spinner with a caption on it — exactly what the motion rules forbid. When
+the crew lands in S8b those become real transitions, because a Silhouette agent finishing is
+an event. The vocabulary was designed for the destination; the honest thing is to use the
+part of it that is true today.
+
+## A swap rewrites the words as well as the picture
+
+The rationale and the pro tips were written about a combination that no longer exists. A tip
+about the trouser the user just swapped out is the visual state disagreeing with the wardrobe
+state, in prose — the same failure as a stale image, harder to notice.
+
+So a swap replaces the rationale with `app.domain.scoring.describe`, which describes the
+*scoring* (something the system knows first-hand), drops the pro tips, budget tricks and
+trend notes, and says so in a line the user can read. Wardrobe gaps survive: they describe
+the wardrobe, not the combination.
+
+The alternative — keep the advisor's prose and re-ask it after every swap — would have made
+the fast interaction slow and would have spent a provider call on a change the user made
+themselves.
+
+## The outfit row stores the preferences it was composed against
+
+`preference_match` is one of the six scoring dimensions and it needs the vibe, the fit and
+the colours the user asked for. Without them a swap would rescore against an empty question,
+silently neutralising a fifth of the score the moment a slot changed — the number on screen
+would move for a reason the user could not see and we could not explain.
+
+Three columns (`vibe`, `fit_preference`, `color_preferences`) rather than a join to
+`style_profiles`, because the question this look was scored against is a property of the
+look. A user who changes their preferences later has not changed what this outfit was for.
+
+## Alternatives are scored in the look, not on their own
+
+`GET /outfits/{id}/alternatives` scores each candidate *with the other pieces currently on
+screen* and reports the resulting look score plus the delta. A shortlist ordered by solo
+score would recommend the best shoe in the wardrobe rather than the best shoe with this
+shirt, which is a different and much less useful question.
+
+A negative delta is shown as readily as a positive one. The score is a heuristic; a swap the
+user wants for reasons it cannot see is still theirs to make, and hiding the number would be
+deciding for them.
+
+## Empty is an answer, and it has three different shapes
+
+* **No complete outfit possible** — `POST /outfits/compose` completes with no `result_id` and
+  a named gap inline on the job. Not a failed job: a failure offers a retry, and retrying
+  cannot conjure a pair of trousers.
+* **No alternatives for a slot** — 200 with `alternatives: []` and a generic description of
+  what would unlock it. A user who owns one pair of shoes has a small wardrobe, not a broken
+  request.
+* **A garment deleted from under a saved look** — the slot keeps its place with `item: null`,
+  the outfit reports `incomplete`, and the swap affordance becomes the repair (Case 14).
+
+None of the three substitutes anything. That is the one rule the product rests on.
+
+## An incomplete look shows no Style Match and no styling notes
+
+Caught while looking at the screen rather than the tests. A look whose garment had been
+deleted still displayed "84" and a pro tip about cuffing the chino — the chino that was no
+longer in it. Both are true statements about a combination that no longer exists, sitting
+next to a banner explaining that it no longer exists.
+
+The swap path already rewrites the narration server-side. A deletion cannot: there is nothing
+to rescore, because a look with a hole in it has no score. So the result screen holds the
+number back until the look is whole and says why. Wardrobe gaps stay, because they describe
+the wardrobe rather than the combination.
+
+The alternative — recompute a score over the surviving pieces — would put a number on
+something the user cannot wear.
+
+## Share copies text, and deliberately not a link
+
+A link to the result screen would only work for the person who composed it: the images are
+served against a signed, expiring capability naming one owner. A URL that silently fails for
+everyone the user sends it to is a worse feature than no URL, and making it work would mean
+publishing someone's private photographs.
+
+So "Copy the look" puts the garments on the clipboard as text. A rendered share card with no
+live image capability is the real answer and it lands with `flags.shareCards`.
+
+## Regenerate is the compose endpoint again
+
+No `POST /outfits/{id}/regenerate`. The button fires its own analytics event and re-runs
+composition with the preferences the client already holds. A second endpoint would have been
+a synonym for the first with a different name in the log — and docs/ANALYTICS.md wanted the
+distinction in the event, which is where it now is.
+
+## `CompositionService` can be handed its candidates
+
+The nine-step orchestration reads the candidate set in step 1 and then awaits a provider.
+Held inside a request-scoped repository, that means a database connection checked out for the
+length of an HTTP call to Groq — the exact thing `ingest.py` is structured to avoid on the
+extraction path.
+
+`compose()` now accepts `candidates`, and the job runner retrieves them in one short unit of
+work before the advisor call and persists in another after it. The retrieval is still the one
+scoped query; what changed is who holds the session while the model thinks.
+`tests/test_compose_service.py` measures the property rather than asserting it in a comment:
+the advisor records how many sessions were open when it was called, and the answer is zero.
+
+## The vision token ceiling stayed at 2048 — after lowering it and putting it back
+
+Worth recording as a wrong turn, because the reasoning was plausible and the measurement
+said otherwise.
+
+The account's on-demand tier reports 1000 requests and 8000 **input** tokens per minute in
+its rate-limit headers, and enforces a separate **output** ceiling of 1000 tokens per minute
+per model that the headers do not mention. It refuses before the model runs:
+
+```text
+2048 ceiling -> Limit 1000, Requested 1579
+1024 ceiling -> Limit 1000, Requested 1024
+```
+
+The obvious reading is that the configured ceiling is compared to the limit, so S6's 2048
+could never be admitted and a smaller number would fix it. That reading is wrong. Ceilings of
+960, 896 and 800 were refused just as readily once the window had been spent, and 2048 has
+produced successful extractions all through S6 and S7 whenever the minute was free. The
+refusal tracks the **remaining budget**, not the number we send.
+
+What lowering it does do is take the model's thinking room away. At 768 the request is
+admitted and comes back `json_validate_failed` with nothing generated — the same
+reasoning-budget failure S6 found at a ceiling of 32, except now it arrives as a burned call
+and a failed card instead of a retryable refusal. A ceiling that fails *after* admission is
+strictly worse than one that is occasionally refused before it: the refusal is classified,
+retryable, and costs nothing.
+
+So the number stayed. A real extraction emits ~205 output tokens (823 characters, measured);
+the rest of the budget is where the model reasons before writing any of them.
+
+The real constraint is the tier (blocker B17), and it binds on **concurrency**: three
+photographs uploaded in one gesture are three requests against one minute's budget. That is
+the documented primary flow, and on this account some of those calls are refused.
+
+## The live suite skips on capacity rather than failing
+
+A rate limit is not evidence about our schema. `AI_UNAVAILABLE` is what the API answers for
+one, deliberately identical to an outage because the difference is our capacity problem and a
+user can do nothing with it — right for the product, unhelpful for a canary.
+
+`tests/live/capacity.py` reads the code and skips, with a message naming the tier limit, and
+`conftest.VISION_PACING_S` spaces the vision-heavy modules a minute apart. Every module
+passes on its own; a full run on this account skips what the provider refuses rather than
+reporting a red that says nothing. Skipping on a genuine outage is the cost, and
+`test_model_availability.py` is the canary for that case.
+
+This was found the honest way: the first full run failed, and the failure moved between tests
+depending on which one was running when the budget ran out.
+
+## B6 confirmed itself during S7's verification
+
+S6 predicted it: without `SESSION_SECRET` the API signs with a per-process key, so a restart
+orphans every session. During S7's browser verification an edit to `config.py` triggered
+uvicorn's reloader, and a wardrobe that had taken several minutes and a dozen provider calls
+to seed became unreachable — the rows are still in the database, owned by a user whose token
+can no longer be minted.
+
+Nothing to fix in the code; the warning at boot says exactly this. But it moves B6 from a
+predicted risk to an observed one, and the mitigation is one environment variable.
+
+## What the rate limit says about the demo
+
+The product behaves correctly under it — per-photograph failure with retryable copy, one card
+affected, an honest gap instead of a fabricated outfit. That is the degradation ladder working
+in production conditions rather than in a test.
+
+It is still a demo risk (B6), and S7's own browser verification is the evidence: seeding a
+four-garment wardrobe took several passes, with the retry button doing exactly what it is for.
+Uploading six photographs at once in front of an interviewer, on this tier, will produce cards
+that say "we're at capacity". Upload in twos, or pre-seed the wardrobe before the room is
+watching.
+
+Worth separating two things that look alike: the product's behaviour under this is correct and
+was verified against the real provider — one card fails, the others resolve, the retry is
+offered, and composition names the missing role instead of inventing a garment. What is wrong
+is the tier, not the pipeline.
+
+## Mutations run
+
+| Mutation | Result |
+|---|---|
+| Read the swap replacement unscoped (cross-user) | caught, 2 tests |
+| Drop the role-mismatch check | caught, 1 test |
+| Score a candidate alone instead of in the look | caught, 3 tests across 2 files |
+| Keep the words written about the previous look after a swap | caught, 1 test |
+| Drop a deleted garment's slot instead of keeping it empty | caught, 2 tests |
+| Report an insufficient wardrobe as a failed job | caught, 1 test |
+| Hold the database session across the advisor call | caught, 1 test |
+| Let a second save write a second row | caught, 1 test |
+| Offer the garment already in the slot as its own alternative | caught, 2 tests |
+
+Nine run, nine caught.
