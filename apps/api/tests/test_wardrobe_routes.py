@@ -259,11 +259,33 @@ def test_the_wardrobe_lists_only_the_callers_garments(api, caller, wait_for_job)
 
 
 def test_the_wardrobe_shows_items_that_are_still_analysing(api, caller):
-    """A card must exist before the reading does, or the user's file seems to vanish."""
-    upload(api, caller)
+    """A card must exist before the reading does, or the user's file seems to vanish.
 
-    items = api.get("/api/v1/wardrobe/items", headers=caller.headers).json()["items"]
-    assert [item["status"] for item in items] == ["analyzing"]
+    The analysis is **held** until the assertion has been made. The first version uploaded and
+    then listed, and relied on the listing winning a race against a mock model that answers in
+    microseconds. It usually did; under load it did not, and S13b watched a full run go red on
+    exactly this test while the suite shared a machine with a live browser session. A test that
+    asserts a transient state has to create the state, not hope to catch it.
+    """
+    import asyncio
+    import threading
+
+    released = threading.Event()
+
+    async def hold(_schema: object) -> None:
+        # A thread-safe flag polled from the app's loop: an `asyncio.Event` set from this test
+        # thread would be touched from outside the loop that awaits it.
+        while not released.is_set():
+            await asyncio.sleep(0.01)
+
+    api.transport_double.before = hold
+    try:
+        upload(api, caller)
+
+        items = api.get("/api/v1/wardrobe/items", headers=caller.headers).json()["items"]
+        assert [item["status"] for item in items] == ["analyzing"]
+    finally:
+        released.set()
 
 
 def test_another_users_item_answers_404_and_not_403(api, caller, wait_for_job):

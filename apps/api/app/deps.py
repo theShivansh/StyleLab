@@ -24,7 +24,7 @@ from app.security.tokens import TokenError, TokenSigner
 from app.services.compose import OutfitComposer
 from app.services.faults import Fault
 from app.services.ingest import WardrobeIngestService
-from app.services.jobs import InMemoryJobStore
+from app.services.jobs import JobStore
 from app.services.ratelimit import Limits, RateLimiter
 from app.services.storage import ObjectStore
 
@@ -152,7 +152,7 @@ def store(request: Request) -> ObjectStore:
     return request.app.state.store
 
 
-def jobs(request: Request) -> InMemoryJobStore:
+def jobs(request: Request) -> JobStore:
     return request.app.state.jobs
 
 
@@ -187,7 +187,7 @@ Rates = Annotated[Limits, Depends(limits)]
 Composer = Annotated[OutfitComposer, Depends(composer)]
 Sessions = Annotated["sessionmaker[Session]", Depends(sessions)]
 Ingest = Annotated[WardrobeIngestService, Depends(ingest)]
-Jobs = Annotated[InMemoryJobStore, Depends(jobs)]
+Jobs = Annotated[JobStore, Depends(jobs)]
 Signer = Annotated[TokenSigner, Depends(signer)]
 Store = Annotated[ObjectStore, Depends(store)]
 

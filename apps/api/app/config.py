@@ -193,6 +193,16 @@ class Settings(BaseSettings):
     #: clone should work and should keep its photographs somewhere a person can look at them.
     #: Preflight says so when a production boot leaves it here.
     storage_backend: Literal["local", "database"] = "local"
+    #: Where async job records live (`app/services/jobs.py`).
+    #:
+    #: `memory` keeps each job in the process that created it — right on a laptop, and right for
+    #: exactly one process forever. `database` is the only correct answer anywhere an upload and
+    #: the poll after it can reach different processes: a gradual rollout, a second replica, a
+    #: restart after a configuration change. With `memory` there, a poll for a job running
+    #: perfectly well on the other process answers 404, and the upload card fails with "That
+    #: item isn't in your wardrobe" while the garment is being read. That was the first defect
+    #: the live deployment found.
+    job_backend: Literal["memory", "database"] = "memory"
 
     # --- Identity and signed references ---
     #: HMAC key for session tokens and image URLs. Generated per process when unset, which

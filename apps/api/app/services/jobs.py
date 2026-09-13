@@ -14,8 +14,12 @@ two sources of truth for "how far along" drift and the named one is the one on s
 ## The runner is in-process, and that is a known ceiling
 
 `BackgroundJobs` spawns asyncio tasks in the API process. It survives a single-instance
-deployment and nothing more: a restart loses queued work, and a second instance knows
-nothing of the first's jobs. A durable queue lands in S11 (blocker B14).
+deployment and nothing more: a restart loses queued work (blocker B14).
+
+Job *records* are a separate question, and since S13b they have a separate answer.
+`DatabaseJobStore` puts them where every process can read them, which is what stops a poll
+that reaches the wrong instance from reporting a running job as missing. The work is still
+in-process; only the record of it moved.
 
 The seam is deliberate — `submit` takes a factory and returns nothing, so a real queue
 replaces this class without touching the pipeline above it. What is *not* deferred is the
@@ -36,6 +40,11 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.db.models import JobRow
 
 logger = logging.getLogger("stylelab.jobs")
 
@@ -139,13 +148,20 @@ class Job:
 
 
 class JobStore(Protocol):
-    """Where job records live. In-memory now, Redis or Postgres in S11."""
+    """Where job records live: process memory, or the database (`JOB_BACKEND`).
+
+    `advance` is part of the Protocol because both job bodies call it. It was left off while
+    there was one implementation and every caller was typed against that class, which is how a
+    Protocol stops describing what callers actually need.
+    """
 
     async def create(self, job: Job) -> Job: ...
 
     async def get(self, user_id: str, job_id: str) -> Job | None: ...
 
     async def update(self, job_id: str, **changes: object) -> Job | None: ...
+
+    async def advance(self, job_id: str, stage: str) -> Job | None: ...
 
 
 class InMemoryJobStore:
@@ -186,6 +202,120 @@ class InMemoryJobStore:
     async def advance(self, job_id: str, stage: str) -> Job | None:
         """Move to a named stage, marking the job processing if it was queued."""
         return await self.update(job_id, stage=stage, status=JobStatus.PROCESSING)
+
+
+class DatabaseJobStore:
+    """`JobStore` over a table, for any deployment with more than one process.
+
+    ### Why this exists
+
+    `InMemoryJobStore` keeps a job in the memory of the process that created it. The first live
+    deployment runs on a platform that rolls out gradually, keeps up to two replicas and
+    restarts on every configuration change — so the upload and the poll after it are not
+    guaranteed to reach the same process. When they do not, the poll answers 404 for a job that
+    is running perfectly well somewhere else, and the upload card fails with "That item isn't in
+    your wardrobe" while the garment is being read. Observed on the deployed site, reproduced in
+    `tests/test_jobs_across_instances.py`, closed here.
+
+    ### What it does not fix
+
+    The work itself still runs in the process that accepted the upload (`BackgroundJobs`). If
+    that process is stopped mid-extraction, the record stays `processing` and the client's
+    ceiling turns it into "taking too long, try again" — honest and recoverable rather than
+    silent. A durable queue is still blocker B14.
+
+    ### Threads
+
+    Every call runs in `asyncio.to_thread`, as ingest's `_work` does. Stages advance while a
+    batch of photographs is being read concurrently, and a synchronous commit on the event loop
+    would serialise the whole batch behind each one.
+    """
+
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        self._sessions = sessions
+
+    async def create(self, job: Job) -> Job:
+        def run() -> None:
+            with self._sessions() as session:
+                session.add(_row_from(job))
+                session.commit()
+
+        await asyncio.to_thread(run)
+        return job
+
+    async def get(self, user_id: str, job_id: str) -> Job | None:
+        """Scoped in SQL, not after the fact: the owner is part of the query."""
+
+        def run() -> Job | None:
+            with self._sessions() as session:
+                row = session.execute(
+                    select(JobRow).where(JobRow.job_id == job_id, JobRow.user_id == user_id)
+                ).scalar_one_or_none()
+                return None if row is None else _job_from(row)
+
+        return await asyncio.to_thread(run)
+
+    async def update(self, job_id: str, **changes: object) -> Job | None:
+        """Unscoped on purpose, exactly as `InMemoryJobStore.update` is — the only callers are
+        the job bodies that were handed this id, not a request that asked for it."""
+
+        def run() -> Job | None:
+            with self._sessions() as session:
+                row = session.get(JobRow, job_id)
+                if row is None:
+                    return None
+                updated = replace(_job_from(row), updated_at=datetime.now(UTC), **changes)  # type: ignore[arg-type]
+                _write(row, updated)
+                session.commit()
+                return updated
+
+        return await asyncio.to_thread(run)
+
+    async def advance(self, job_id: str, stage: str) -> Job | None:
+        return await self.update(job_id, stage=stage, status=JobStatus.PROCESSING)
+
+
+def _row_from(job: Job) -> JobRow:
+    row = JobRow(job_id=job.job_id, user_id=job.user_id, type=str(job.type))
+    _write(row, job)
+    row.created_at = job.created_at
+    return row
+
+
+def _write(row: JobRow, job: Job) -> None:
+    row.status = str(job.status)
+    row.stage = job.stage
+    row.result_id = job.result_id
+    row.result = job.result
+    row.error_code = job.error_code
+    row.error_message = job.error_message
+    row.retryable = job.retryable
+    row.attempt = job.attempt
+    row.updated_at = job.updated_at
+
+
+def _job_from(row: JobRow) -> Job:
+    return Job(
+        job_id=row.job_id,
+        user_id=row.user_id,
+        type=JobType(row.type),
+        status=JobStatus(row.status),
+        stage=row.stage,
+        result_id=row.result_id,
+        result=row.result,
+        error_code=row.error_code,
+        error_message=row.error_message,
+        retryable=row.retryable,
+        attempt=row.attempt,
+        created_at=_aware(row.created_at),
+        updated_at=_aware(row.updated_at),
+    )
+
+
+def _aware(moment: datetime) -> datetime:
+    """SQLite hands a timestamp back without its zone; Postgres keeps it. One answer for both,
+    so a comparison between a stored job and a fresh one cannot raise on a naive datetime."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 class BackgroundJobs:

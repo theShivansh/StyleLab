@@ -81,9 +81,9 @@ from app.services.faults import Fault, classify
 from app.services.jobs import (
     STAGES,
     BackgroundJobs,
-    InMemoryJobStore,
     Job,
     JobStatus,
+    JobStore,
     JobType,
     new_job_id,
 )
@@ -161,7 +161,7 @@ class WardrobeIngestService:
         sessions: sessionmaker[Session],
         store: ObjectStore,
         analyzer: AuditingWardrobeAnalyzer,
-        jobs: InMemoryJobStore,
+        jobs: JobStore,
         background: BackgroundJobs,
         limits: UploadLimits,
         telemetry: GenerationLog | None = None,

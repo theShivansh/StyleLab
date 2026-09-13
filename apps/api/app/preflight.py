@@ -191,6 +191,17 @@ def _findings(settings: Settings) -> list[Finding]:
             )
         )
 
+    if settings.job_backend != "database":
+        findings.append(
+            Finding(
+                "JOB_BACKEND",
+                f"is {settings.job_backend!r}, so job records live in the memory of one process",
+                "a redeploy, a restart or a second replica answers 404 to a poll for a job "
+                "that is still running, and the upload card fails with a message about a "
+                "missing item while the garment is being read. Set JOB_BACKEND=database",
+            )
+        )
+
     return findings
 
 
@@ -225,6 +236,22 @@ def verify_schema(engine: Engine) -> None:
     Uses Alembic's own comparison — the same one `--autogenerate` runs — so this check and
     `tests/test_migrations.py` cannot come to different conclusions about what "matches"
     means.
+
+    ## What it tolerates, and why that is not a loosening
+
+    Something the database has and the models do not — a table, a column, an index — is
+    **allowed**. Something the models need and the database lacks is still fatal.
+
+    The first version refused both, and S13b found what that cost while planning a rollout on
+    the live deployment. Every additive migration puts the database ahead of the release that
+    is still running. With a check that refused extra tables, applying the migration first
+    stops that release surviving its next cold start — and on a platform that scales to zero,
+    the next cold start is minutes away. Deploying the code first fails too, because the new
+    release is missing its table. The strict check made the only safe ordering impossible.
+
+    The asymmetry is the real rule: a query can only fail on what it asks for. An additive
+    column must be nullable or carry a server default, or the running release's inserts fail
+    — which is a rule for whoever writes the migration, not something this check can see.
     """
     from alembic.autogenerate import compare_metadata
     from alembic.migration import MigrationContext
@@ -233,14 +260,17 @@ def verify_schema(engine: Engine) -> None:
 
     with engine.connect() as connection:
         context = MigrationContext.configure(connection)
-        differences = compare_metadata(context, Base.metadata)
+        differences = [
+            entry
+            for entry in compare_metadata(context, Base.metadata)
+            if not _operation(entry).startswith("remove_")
+        ]
 
     if not differences:
         return
 
-    # The diff entries are tuples whose first element names the operation; enough detail to
-    # act on, and no table contents anywhere near it.
-    summary = ", ".join(sorted({str(entry[0]) for entry in differences}))
+    # Operation names only; enough detail to act on, and no table contents anywhere near it.
+    summary = ", ".join(sorted({_operation(entry) for entry in differences}))
     raise ConfigurationError(
         f"the database schema does not match the models ({len(differences)} difference(s): "
         f"{summary}).\n"
@@ -249,6 +279,17 @@ def verify_schema(engine: Engine) -> None:
         "not described by any revision: recreate it, or apply the missing columns by hand "
         "and then `alembic stamp head`. See docs/DEPLOYMENT.md."
     )
+
+
+def _operation(entry: object) -> str:
+    """The operation name of one Alembic diff entry.
+
+    A tuple per change — `("add_table", table)` — or a list of tuples for a group of changes
+    to one column. `remove_*` is the database holding something the models do not mention.
+    """
+    if isinstance(entry, list):
+        return str(entry[0][0]) if entry else ""
+    return str(entry[0])  # type: ignore[index]
 
 
 def log_findings(findings: list[Finding]) -> None:

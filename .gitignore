@@ -39,6 +39,9 @@ venv/
 *.egg-info/
 
 # --- test artifacts ---
+# Accessibility snapshots written by the Playwright MCP server while driving the deployed
+# site. Session debris: they name real item ids from a live wardrobe and have no reader.
+.playwright-mcp/
 playwright-report/
 test-results/
 coverage/

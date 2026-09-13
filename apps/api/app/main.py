@@ -62,7 +62,7 @@ from app.routers import wardrobe as wardrobe_router
 from app.security.tokens import TokenSigner
 from app.services.compose import OutfitComposer
 from app.services.ingest import UploadLimits, WardrobeIngestService
-from app.services.jobs import BackgroundJobs, InMemoryJobStore
+from app.services.jobs import BackgroundJobs, DatabaseJobStore, InMemoryJobStore, JobStore
 from app.services.ratelimit import Limits
 from app.services.retention import RetentionSweeper
 from app.services.storage import (
@@ -124,6 +124,15 @@ def _object_store(settings: Settings, sessions: sessionmaker[Session]) -> Object
         return DatabaseObjectStore(sessions)
     logger.info("image store: filesystem")
     return LocalObjectStore(settings.storage_root)
+
+
+def _job_store(settings: Settings, sessions: sessionmaker[Session]) -> JobStore:
+    """Where job records live. `JOB_BACKEND` in app/config.py says why it matters."""
+    if settings.job_backend == "database":
+        logger.info("job store: database")
+        return DatabaseJobStore(sessions)
+    logger.info("job store: memory")
+    return InMemoryJobStore()
 
 
 def create_app(
@@ -204,7 +213,7 @@ def create_app(
         # After `app.state.sessions`, because one of the two stores is built from it.
         app.state.store = store or _object_store(settings, app.state.sessions)
 
-        app.state.jobs = InMemoryJobStore()
+        app.state.jobs = _job_store(settings, app.state.sessions)
         app.state.background = BackgroundJobs()
         # Per instance, not per deployment (docs/SECURITY-PRIVACY.md, and the note in
         # app/services/ratelimit.py). Built here with everything else so a test can reach in

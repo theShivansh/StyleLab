@@ -141,6 +141,41 @@ class AssetBlobRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class JobRow(Base):
+    """One async job, when job records live in the database (`JOB_BACKEND=database`).
+
+    The same fields as `app.services.jobs.Job`, one column each. It exists because a job held
+    in the memory of the process that created it is invisible to every other process — and on
+    a platform that rolls out gradually, runs a second replica and restarts on every release,
+    the poll that follows an upload is not guaranteed to reach the process that took it. The
+    poll then answers 404 for a job that is running perfectly well, and the upload card fails
+    with "That item isn't in your wardrobe" while the garment is being read.
+
+    `user_id` is indexed and not a foreign key. `GET /jobs/{id}` filters on it in SQL, which is
+    the ownership rule; a foreign key would add an insert-ordering dependency on `users` to a
+    table whose rows are written from background tasks, for no protection the scoped read does
+    not already give.
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_user", "user_id"),)
+
+    job_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(64))
+    type: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16))
+    stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The inline answer for a composition that named a gap instead of producing a look.
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class WardrobeItemRow(Base):
     """A garment the user owns. Not a product for sale."""
 

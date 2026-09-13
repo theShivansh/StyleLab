@@ -177,13 +177,14 @@ def test_every_variable_the_guide_names_is_a_setting_that_exists():
 
 
 def test_the_settings_this_deployment_turns_on_are_documented():
-    """The three that are not defaults on the target platform.
+    """The four that are not defaults on the target platform.
 
-    A managed runtime with no volume and a proxy in front needs all three set, and each one
-    is silent when it is wrong: photographs disappear, every visitor shares one rate-limit
-    bucket, and the schema is whatever the last person did by hand.
+    A managed runtime with no volume, more than one process and a proxy in front needs all four
+    set, and each one is silent when it is wrong: photographs disappear, a poll reports a running
+    job as missing, every visitor shares one rate-limit bucket, and the schema is whatever the
+    last person did by hand.
     """
     documented = _documented_api_variables()
 
-    for variable in ("STORAGE_BACKEND", "TRUSTED_PROXY_HOPS", "APP_ENV"):
+    for variable in ("STORAGE_BACKEND", "JOB_BACKEND", "TRUSTED_PROXY_HOPS", "APP_ENV"):
         assert variable in documented, variable

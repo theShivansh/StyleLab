@@ -93,6 +93,7 @@ DB_ACTIVITY_TOKEN=
 
 # Storage and identity
 STORAGE_BACKEND=local              # `local` or `database` — see "Storage" below
+JOB_BACKEND=memory                 # `memory` or `database` — see "Jobs" below
 STORAGE_ROOT=var/uploads           # only read when STORAGE_BACKEND=local
 STORAGE_BUCKET=stylelab-private
 SUPABASE_URL=
@@ -135,8 +136,17 @@ That means the ordering rule is the operator's to keep, and it is the ordinary o
   it, because the running old code must tolerate the new schema
 - **removing** something — deploy the code that stopped using it **first**, migrate after
 
-The 0002 migration is additive and unused by default, which is the easy case: apply it
-whenever, then set `STORAGE_BACKEND=database`.
+**That rule was not true of this codebase until S13b**, and it is worth knowing why. Boot's
+schema check refused *any* difference, including a table the running release had never heard
+of — so migrating first would have stopped the live release surviving its next cold start,
+which on a platform that scales to zero is minutes away. Deploying first fails too, because the
+new release is missing its table. The check now tolerates what the database has and the models
+do not, and refuses only what the models need and the database lacks. That asymmetry is what
+makes "add, then deploy" safe. An additive column must be nullable or carry a server default,
+or the release still running will fail its inserts.
+
+Migrations 0002 (`asset_blobs`) and 0003 (`jobs`) are both additive and unused by default:
+apply them, deploy, then set `STORAGE_BACKEND=database` and `JOB_BACKEND=database`.
 
 Nothing has to remember to check afterwards. Boot verifies the schema against the models and
 refuses to serve if they differ, so a deployment that went out ahead of its migration fails
@@ -250,6 +260,31 @@ curl -i -H "X-DB-Activity-Token: $DB_ACTIVITY_TOKEN" https://<api-host>/internal
 ```
 
 Or from GitHub: Actions → **DB activity** → Run workflow.
+
+## Jobs
+
+`JOB_BACKEND` picks where async job records live — an upload's analysis and a composition,
+each followed by the browser through `GET /jobs/{id}`.
+
+| Value | Where records live | Correct when |
+|---|---|---|
+| `memory` (default) | the process that created the job | a laptop, or exactly one process forever |
+| `database` | a `jobs` row in `DATABASE_URL` | anything with a rollout, a restart or a second replica |
+
+**On FastAPI Cloud it must be `database`.** Found by the deployed site rather than by review:
+an upload reached one instance, the poll after it reached another, and the card read *"That
+item isn't in your wardrobe"* for a photograph that was being read correctly.
+`apps/api/tests/test_jobs_across_instances.py` reproduces it with two applications over one
+database, and shows the database store closing it.
+
+The record moved; the work did not. Analysis still runs in the process that accepted the
+upload, so an instance stopped mid-extraction leaves its job `processing` until the client's
+ninety-second ceiling offers a retry. A durable queue is still blocker B14.
+
+The web client no longer depends on this alone. A job that answers 404 makes the card re-read
+the garment, whose status lives in the database every instance shares, and a passing 5xx or
+dropped connection is retried a few times before a card gives up
+(`apps/web/src/lib/analysis-poll.ts`).
 
 ## Storage
 
@@ -370,6 +405,7 @@ Set at minimum:
 ```bash
 APP_ENV=production
 STORAGE_BACKEND=database     # `local` has no durable disk here — see Storage
+JOB_BACKEND=database         # or a poll that reaches another instance calls a running job missing
 TRUSTED_PROXY_HOPS=1         # or every visitor shares one rate-limit bucket
 ```
 

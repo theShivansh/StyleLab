@@ -37,6 +37,7 @@ DEPLOYED = {
     "exa_api_key": "not-a-real-key",
     "supabase_url": "https://project.supabase.co",
     "storage_backend": "database",
+    "job_backend": "database",
 }
 
 
@@ -49,6 +50,7 @@ PREFLIGHT_READS = (
     "exa_api_key",
     "supabase_url",
     "storage_backend",
+    "job_backend",
 )
 
 
@@ -200,6 +202,20 @@ def test_local_storage_in_production_warns_rather_than_refusing():
 
     assert settings_named(findings) == {"STORAGE_BACKEND"}
     assert "volume" in findings[0].consequence
+
+
+def test_in_memory_jobs_in_production_warn_and_say_what_the_user_sees():
+    """The first defect the live deployment found, as a boot-time sentence.
+
+    Advisory rather than fatal for the same reason storage is: one process forever is a
+    legitimate deployment. The consequence names the symptom a user reports, because that is
+    what an operator will be searching the logs for.
+    """
+    findings = verify_deployment(deployed(job_backend="memory"))
+
+    assert settings_named(findings) == {"JOB_BACKEND"}
+    assert "isn't in your wardrobe" not in findings[0].consequence  # no copy leaks into logs
+    assert "404" in findings[0].consequence
 
 
 def test_the_storage_warning_asks_about_the_store_and_not_about_supabase():

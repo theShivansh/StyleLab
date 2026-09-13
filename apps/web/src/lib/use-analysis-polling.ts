@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { pollAnalysis } from "./analysis-poll";
 import { track } from "./analytics";
 import { getJob, getWardrobeItem } from "./api/wardrobe";
 import { config } from "./config";
-import { userMessage } from "./errors";
 import type { WardrobeItem } from "./schemas/wardrobe";
 import { useWardrobe } from "./wardrobe-store";
-
-const POLL_INTERVAL_MS = 1200;
-/** ~90s at the interval above. An extraction that has not finished by then has failed. */
-const MAX_ATTEMPTS = 75;
 
 /**
  * Turns analysing uploads into garment cards.
@@ -18,6 +14,11 @@ const MAX_ATTEMPTS = 75;
  * Each upload is polled on its own schedule and resolves on its own, which is what makes the
  * cards appear progressively rather than all at once behind a single batch spinner. One
  * photo's failure marks one card.
+ *
+ * What to do with each answer lives in `analysis-poll.ts`, as a pure function with its own
+ * tests. It moved there after the first live deployment, where this hook's rule — any error
+ * ends the card — turned a poll that reached a different API instance into "That item isn't in
+ * your wardrobe" for a garment that was being read correctly.
  *
  * ## Why the controllers are per job
  *
@@ -55,7 +56,6 @@ export function useAnalysisPolling() {
 
     for (const upload of pending) {
       const jobId = upload.jobId;
-      const itemId = upload.itemId;
       if (!jobId) continue;
 
       const controller = new AbortController();
@@ -64,64 +64,49 @@ export function useAnalysisPolling() {
 
       void (async () => {
         try {
-          for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-            if (controller.signal.aborted) return;
+          const outcome = await pollAnalysis(
+            { jobId, itemId: upload.itemId },
+            {
+              getJob,
+              getItem: getWardrobeItem,
+              sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+              // Named work, straight from the job. This is what makes the card say "reading
+              // colour and cut" rather than spinning.
+              onStage: (stage) => updateUpload(upload.localId, { stage }),
+            },
+            controller.signal,
+          );
 
-            const job = await getJob(jobId, controller.signal);
+          if (outcome === null) return;
 
-            if (job.status === "failed") {
-              // The server's message, not ours. It was written against the actual failure
-              // and it says whether retrying is worth the user's time; a generic local
-              // string would be worse copy about something we know less about.
-              updateUpload(upload.localId, {
-                state: "failed",
-                stage: job.stage,
-                error:
-                  job.error?.message ??
-                  "We couldn't read that photo. Retake it, or add the details by hand.",
-                retryable: job.error?.retryable ?? true,
-              });
-              track("extraction_failed", { code: job.error?.code ?? "unknown" });
-              return;
-            }
+          if (outcome.kind === "ready") {
+            upsertItem(outcome.item);
+            // docs/ANALYTICS.md wants a confidence *bucket*, not the scores: the KPI is "how
+            // often does the model come back unsure", and a histogram of raw floats per field
+            // would be a description of one person's wardrobe.
+            track("extraction_completed", {
+              confidence: confidenceBucket(outcome.item),
+              duration_ms: Date.now() - startedAt,
+            });
+            updateUpload(upload.localId, { state: "ready", stage: outcome.stage });
+            return;
+          }
 
-            if (job.status === "completed") {
-              if (!itemId) {
-                updateUpload(upload.localId, {
-                  state: "failed",
-                  error: "That photo went missing.",
-                });
-                return;
-              }
-              const item = await getWardrobeItem(itemId, controller.signal);
-              upsertItem(item);
-              // docs/ANALYTICS.md wants a confidence *bucket*, not the scores: the KPI is
-              // "how often does the model come back unsure", and a histogram of raw floats
-              // per field would be a description of one person's wardrobe.
-              track("extraction_completed", {
-                confidence: confidenceBucket(item),
-                duration_ms: Date.now() - startedAt,
-              });
-              updateUpload(upload.localId, { state: "ready", stage: job.stage });
-              return;
-            }
-
-            // Named work, straight from the job. This is what makes the card say "reading
-            // colour and cut" rather than spinning.
-            if (job.stage !== upload.stage) {
-              updateUpload(upload.localId, { stage: job.stage });
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+          if (outcome.kind === "failed") {
+            updateUpload(upload.localId, {
+              state: "failed",
+              stage: outcome.stage,
+              error: outcome.message,
+              retryable: outcome.retryable,
+            });
+            track("extraction_failed", { code: outcome.code });
+            return;
           }
 
           updateUpload(upload.localId, {
             state: "failed",
             error: "That one is taking too long. Try it again.",
           });
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          updateUpload(upload.localId, { state: "failed", error: userMessage(error) });
         } finally {
           controllers.current.delete(jobId);
         }

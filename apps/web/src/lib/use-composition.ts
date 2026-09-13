@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { track } from "@/lib/analytics";
 import { composeOutfit, type ComposeRequest } from "@/lib/api/outfits";
+import { isNotFound, isTransient } from "@/lib/analysis-poll";
 import { getJob } from "@/lib/api/wardrobe";
 import { userMessage } from "@/lib/errors";
 import { compositionGapSchema, type CompositionGap } from "@/lib/schemas/outfit";
@@ -11,6 +12,8 @@ import { compositionGapSchema, type CompositionGap } from "@/lib/schemas/outfit"
 const POLL_INTERVAL_MS = 1000;
 /** ~60s. A composition that has not finished by then is not going to. */
 const MAX_ATTEMPTS = 60;
+/** Consecutive passing poll failures tolerated before the look is reported as failed. */
+const MAX_HICCUPS = 4;
 
 export type CompositionState = "idle" | "composing" | "gap" | "failed";
 
@@ -54,10 +57,29 @@ export function useComposition() {
 
       try {
         const job = await composeOutfit(request, running.signal);
+        let hiccups = 0;
 
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
           if (running.signal.aborted) return;
-          const status = await getJob(job.job_id, running.signal);
+
+          let status: Awaited<ReturnType<typeof getJob>>;
+          try {
+            status = await getJob(job.job_id, running.signal);
+            hiccups = 0;
+          } catch (failure) {
+            if (running.signal.aborted) return;
+            // A poll that meets a rollout, a restart or a passing 5xx is not a failed
+            // composition: the crew is still running somewhere. A few in a row are tolerated —
+            // including a 404, which is what a job held by another instance looked like before
+            // job records moved to the database. More than that is a real outage and says so.
+            // The same rules, reasoned through, are in lib/analysis-poll.ts.
+            if ((isTransient(failure) || isNotFound(failure)) && hiccups < MAX_HICCUPS) {
+              hiccups += 1;
+              await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+              continue;
+            }
+            throw failure;
+          }
 
           if (status.status === "failed") {
             track("composition_failed", { code: status.error?.code ?? "AI_UNAVAILABLE" });

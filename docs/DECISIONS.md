@@ -955,6 +955,49 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-14 — The deployed site's first bug: a running job reported as a missing garment
+
+Context:
+Minutes after the first deployment, an upload card read *"Couldn't read it — That item isn't in
+your wardrobe"* for a sample photograph. The same upload against the same deployment then
+succeeded, twice, through the real UI. The intermittency was the clue.
+
+Cause:
+Job records lived in the memory of the process that created them. Environment variables were
+being edited at the time, and each edit redeploys; FastAPI Cloud rolls out gradually, so for a
+while old and new instances serve side by side. The upload reached one, a poll reached the
+other, and `GET /jobs/{id}` answered 404. The web poller ended the card on any error, and the
+jobs route reuses the `ITEM_NOT_FOUND` code — so the card blamed the garment.
+
+Three defects, not one, each reproduced before it was fixed:
+
+1. **Job records in process memory on a multi-process platform.** `DatabaseJobStore`,
+   migration 0003, `JOB_BACKEND=database`. `tests/test_jobs_across_instances.py` builds two
+   applications over one database and first shows the in-memory store answering 404 to the
+   instance that did not take the upload — so the diagnosis is a test, not a story.
+2. **A poller with one rule for every error.** The jobs route's own docstring said a poller that
+   meets a restart should re-read the item, and the client never did. Now a job 404 re-reads
+   the garment, whose status is in the shared database, and a passing 5xx or dropped connection
+   is retried a few times before a card gives up. Pulled out of the hook into a pure function
+   with its own tests, because a rule this consequential should not be testable only through a
+   browser.
+3. **A schema check that made "migrate first" impossible.** Found while planning this very
+   rollout. `verify_schema` refused any difference, including a table the running release had
+   never heard of — so applying 0003 before the code, the order the previous entry recommends,
+   would have stopped the live release surviving its next cold start. It now tolerates what
+   the database has and the models do not, and still refuses what the models need.
+
+Deliberately not fixed:
+The work still runs in-process. An instance stopped mid-extraction leaves its job `processing`
+until the client's ceiling offers a retry — honest and recoverable. A durable queue is B14.
+
+The correction worth keeping:
+The previous entry documented "add, then migrate before deploying" as the ordering rule. It was
+the platform's rule, quoted correctly, and it was false for this codebase on the day it was
+written. Nothing exercised it until a real migration had to go out under a live release.
+
+---
+
 ### 2026-09-14 — FastAPI Cloud instead of a Hugging Face Space, and the two things it made wrong
 
 Context:

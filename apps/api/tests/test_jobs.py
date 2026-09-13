@@ -9,6 +9,7 @@ import pytest
 from app.services.jobs import (
     STAGES,
     BackgroundJobs,
+    DatabaseJobStore,
     InMemoryJobStore,
     Job,
     JobStatus,
@@ -77,34 +78,52 @@ def test_terminal_states_are_the_two_the_poller_stops_on(status, terminal):
     assert make_job(status=status).terminal is terminal
 
 
-# --- the store ----------------------------------------------------------------------------
+# --- the store, for both implementations -------------------------------------------------------
 
 
-async def test_a_job_is_readable_by_its_owner():
-    store = InMemoryJobStore()
+@pytest.fixture(params=["memory", "database"])
+def store(request, tmp_path):
+    """Both implementations, through one set of tests.
+
+    The move `tests/test_storage.py` makes for images, for the same reason: a Protocol is only
+    worth having if its implementations are interchangeable, and running identical assertions
+    against each is how that stops being a belief.
+    """
+    if request.param == "memory":
+        yield InMemoryJobStore()
+        return
+
+    from app.db.models import Base
+    from app.db.session import build_engine, session_factory
+
+    engine = build_engine(f"sqlite+pysqlite:///{(tmp_path / 'jobs.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    yield DatabaseJobStore(session_factory(engine))
+    engine.dispose()
+
+
+async def test_a_job_is_readable_by_its_owner(store):
     job = await store.create(make_job())
 
     assert (await store.get("user_1", job.job_id)) == job
 
 
-async def test_another_users_job_is_not_readable_even_with_its_id():
+async def test_another_users_job_is_not_readable_even_with_its_id(store):
     """A job id is unguessable and still not a capability.
 
     Same rule as every repository read: the scope is a parameter, not an assumption about
     how hard the identifier is to find.
     """
-    store = InMemoryJobStore()
     job = await store.create(make_job(user_id="user_owner"))
 
     assert await store.get("user_other", job.job_id) is None
 
 
-async def test_a_missing_job_reads_as_none():
-    assert await InMemoryJobStore().get("user_1", "job_nope") is None
+async def test_a_missing_job_reads_as_none(store):
+    assert await store.get("user_1", "job_nope") is None
 
 
-async def test_updating_replaces_fields_and_moves_the_timestamp():
-    store = InMemoryJobStore()
+async def test_updating_replaces_fields_and_moves_the_timestamp(store):
     job = await store.create(make_job())
 
     updated = await store.update(job.job_id, status=JobStatus.COMPLETED, result_id="item_1")
@@ -116,8 +135,7 @@ async def test_updating_replaces_fields_and_moves_the_timestamp():
     assert updated.created_at == job.created_at
 
 
-async def test_advancing_a_queued_job_marks_it_processing():
-    store = InMemoryJobStore()
+async def test_advancing_a_queued_job_marks_it_processing(store):
     job = await store.create(make_job())
 
     advanced = await store.advance(job.job_id, STAGES[1])
@@ -127,17 +145,16 @@ async def test_advancing_a_queued_job_marks_it_processing():
     assert advanced.stage == STAGES[1]
 
 
-async def test_updating_a_job_that_does_not_exist_is_not_an_error():
-    assert await InMemoryJobStore().update("job_nope", status=JobStatus.FAILED) is None
+async def test_updating_a_job_that_does_not_exist_is_not_an_error(store):
+    assert await store.update("job_nope", status=JobStatus.FAILED) is None
 
 
-async def test_a_job_record_is_immutable_so_a_poller_never_sees_a_half_update():
+async def test_a_job_record_is_immutable_so_a_poller_never_sees_a_half_update(store):
     """Frozen and replaced rather than mutated.
 
     A poller reading a record while a background task set `status=completed` but had not yet
     set `result_id` would see a finished job with nothing to fetch.
     """
-    store = InMemoryJobStore()
     job = await store.create(make_job())
     held = await store.get("user_1", job.job_id)
 
@@ -145,6 +162,76 @@ async def test_a_job_record_is_immutable_so_a_poller_never_sees_a_half_update():
 
     assert held is not None
     assert held.status is JobStatus.QUEUED  # the reference the poller holds did not change
+
+
+async def test_a_named_gap_survives_the_round_trip(store):
+    """A composition that cannot fill a role answers inline, in `result`, with no row to fetch.
+
+    The database store has to carry that payload intact or the product silently loses its
+    honest answer — "your wardrobe needs footwear" — and the client shows a generic failure.
+    """
+    job = await store.create(make_job(type=JobType.COMPOSE_OUTFIT))
+    gap = {"missing_roles": ["footwear"], "wardrobe_gaps": [{"item": "white leather sneaker"}]}
+
+    await store.update(job.job_id, status=JobStatus.COMPLETED, result=gap)
+    read = await store.get("user_1", job.job_id)
+
+    assert read is not None
+    assert read.type is JobType.COMPOSE_OUTFIT
+    assert read.result == gap
+
+
+async def test_a_failure_keeps_its_code_message_and_whether_to_retry(store):
+    """The card shows the classifier's message and offers a retry only when it said to."""
+    job = await store.create(make_job())
+
+    await store.update(
+        job.job_id,
+        status=JobStatus.FAILED,
+        error_code="EXTRACTION_FAILED",
+        error_message="We couldn't read that garment clearly.",
+        retryable=True,
+        attempt=2,
+    )
+    read = await store.get("user_1", job.job_id)
+
+    assert read is not None
+    assert (read.error_code, read.retryable, read.attempt) == ("EXTRACTION_FAILED", True, 2)
+    assert read.error_message == "We couldn't read that garment clearly."
+
+
+async def test_a_job_written_by_one_process_is_read_and_finished_by_another(tmp_path):
+    """The property the database store exists for, without HTTP in the way.
+
+    Two stores, each with its own engine, over one database — which is what two replicas are.
+    One creates and advances; the other reads the progress and records the result; the first
+    sees it. `InMemoryJobStore` cannot pass this, and that is not a limitation to work around:
+    it is the 404 a user saw on the deployed site.
+    """
+    from app.db.models import Base
+    from app.db.session import build_engine, session_factory
+
+    url = f"sqlite+pysqlite:///{(tmp_path / 'shared.db').as_posix()}"
+    first_engine, second_engine = build_engine(url), build_engine(url)
+    Base.metadata.create_all(first_engine)
+    first = DatabaseJobStore(session_factory(first_engine))
+    second = DatabaseJobStore(session_factory(second_engine))
+
+    try:
+        job = await first.create(make_job())
+        await first.advance(job.job_id, STAGES[2])
+
+        seen = await second.get("user_1", job.job_id)
+        assert seen is not None
+        assert seen.stage == STAGES[2]
+
+        await second.update(job.job_id, status=JobStatus.COMPLETED, result_id="item_9")
+        finished = await first.get("user_1", job.job_id)
+        assert finished is not None
+        assert (finished.status, finished.result_id) == (JobStatus.COMPLETED, "item_9")
+    finally:
+        first_engine.dispose()
+        second_engine.dispose()
 
 
 # --- the runner ---------------------------------------------------------------------------

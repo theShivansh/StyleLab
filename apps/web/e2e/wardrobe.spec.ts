@@ -516,3 +516,44 @@ test("backing out of clearing the wardrobe leaves it alone", async ({ page }) =>
   await expect(page.locator('section[aria-label="Wardrobe"] li')).toHaveCount(1);
   expect(called).toBe(false);
 });
+
+test("@critical a poll that reaches another API instance still finishes the card", async ({
+  page,
+}) => {
+  /**
+   * The first defect the live deployment found. The upload reached one instance, the poll
+   * reached another, and the job record lived only in the first — so the job answered 404 and
+   * the card read "That item isn't in your wardrobe" for a garment that was ready in the
+   * database the whole time. The poller must re-read the item instead (lib/analysis-poll.ts).
+   */
+  await page.route("**/api/v1/wardrobe/items", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      json: {
+        items: [
+          { item_id: "item_1", asset_id: "asset_1", job_id: "job_elsewhere", status: "analyzing" },
+        ],
+      },
+    });
+  });
+
+  await page.route("**/api/v1/jobs/*", (route) =>
+    route.fulfill({
+      status: 404,
+      json: {
+        error: { code: "ITEM_NOT_FOUND", message: "We couldn't find that job.", retryable: false },
+      },
+    }),
+  );
+
+  await page.route("**/api/v1/wardrobe/items/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ json: itemPayload() });
+  });
+
+  await page.goto("/wardrobe");
+  await pick(page, [{ name: "shirt.png", mimeType: "image/png", buffer: PNG }]);
+
+  await expect(page.getByText("oxford shirt").first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("That item isn't in your wardrobe.")).toHaveCount(0);
+});

@@ -58,9 +58,9 @@ from app.services.faults import classify
 from app.services.jobs import (
     COMPOSE_STAGES,
     BackgroundJobs,
-    InMemoryJobStore,
     Job,
     JobStatus,
+    JobStore,
     JobType,
     new_job_id,
 )
@@ -133,7 +133,7 @@ class OutfitComposer:
         *,
         sessions: sessionmaker[Session],
         advisor: OutfitAdvisor,
-        jobs: InMemoryJobStore,
+        jobs: JobStore,
         background: BackgroundJobs,
         trend_source: TrendSource | None = None,
         ranker: DeterministicRanker | None = None,
