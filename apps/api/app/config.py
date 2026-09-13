@@ -3,8 +3,11 @@
 There is no demo mode (docs/DECISIONS.md, 2026-09-12). A missing or invalid key is a loud
 boot failure, never a silent downgrade into a stub — AI-EVAL-CASES Case 25 asserts this.
 
-Model IDs live here and in .env.example. Nowhere else. They must never appear in a route
-handler, a domain module, or a prompt template.
+Model IDs live here and in docs/DEPLOYMENT.md. Nowhere else. They must never appear in a
+route handler, a domain module, or a prompt template.
+
+(The second place was `.env.example` until S12. It is untracked now — it held a live key
+from S2 until GitHub's scanner refused the first push.)
 """
 
 from functools import lru_cache

@@ -1,7 +1,18 @@
 # --- secrets (kit shipped none of this; add BEFORE first commit) ---
 .env
 .env.*
-!.env.example
+# No `!.env.example` negation. It was here from the first commit, and on the first push to
+# GitHub the secret scanner refused the push: a **live Groq API key** was sitting in
+# `.env.example:16`, committed in S2 and carried through every commit since. The key has been
+# rotated and the file is purged from history (S12).
+#
+# The negation is not coming back. A tracked env template is a file whose whole job is to
+# look harmless while sitting one careless paste away from being a credential — and the
+# thing it existed to provide now exists somewhere better: `docs/DEPLOYMENT.md` lists every
+# variable, its default and what breaks without it, and it cannot hold a value by accident
+# because it is prose.
+#
+# Keep a local `.env.example` if you like. It stays on your disk.
 *.pem
 *.key
 .claude/settings.local.json

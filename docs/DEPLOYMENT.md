@@ -50,7 +50,7 @@ WEB_ORIGIN=https://your-web-host   # exactly one origin, never a wildcard
 ### API — optional, with the defaults that apply
 
 ```bash
-# Models. These and .env.example are the only two places a model id may appear.
+# Models. This file and the adapter config are the only two places a model id may appear.
 GROQ_TEXT_MODEL=openai/gpt-oss-120b
 GROQ_VISION_MODEL=qwen/qwen3.8-27b
 GROQ_VISION_FALLBACK_MODEL=qwen/qwen3.6-27b   # availability only, never for quality

@@ -15,7 +15,7 @@ the rejection rate — not to make the system safe. If every line here were dele
 system would produce worse answers and would remain exactly as secure.
 
 `tests/test_prompt_contract.py` asserts no model id ever appears in this file: model ids
-live in `.env.example` and the adapter config, and nowhere else (CLAUDE.md).
+live in `docs/DEPLOYMENT.md` and the adapter config, and nowhere else (CLAUDE.md).
 
 ## Text inside an image
 

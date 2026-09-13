@@ -104,7 +104,7 @@ def test_domain_models_name_no_provider_concept():
 
 # --- model ids ---------------------------------------------------------------------------
 
-#: CLAUDE.md: "Model IDs appear in exactly two places: `.env.example` and the adapter
+#: CLAUDE.md: "Model IDs appear in exactly two places: `docs/DEPLOYMENT.md` and the adapter
 #: config." `app/config.py` is that config. Everywhere else reads it.
 MODEL_ID_HOME = "config.py"
 
@@ -174,7 +174,7 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 def test_ci_does_not_pin_a_model_id():
     """The third place model ids were living, which neither rule could see.
 
-    CLAUDE.md allows them in `.env.example` and the adapter config. `live-smoke` also set
+    CLAUDE.md allows them in `docs/DEPLOYMENT.md` and the adapter config. `live-smoke` also set
     `GROQ_VISION_MODEL` and friends in its `env:` block, and the test above only scans
     `apps/api/app/` — so the violation was invisible to the guard that exists for it.
 

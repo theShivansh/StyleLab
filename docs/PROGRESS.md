@@ -176,6 +176,23 @@ key, so it is a local-and-main gate rather than a per-push one.
       provisioned Postgres — which leaves the wardrobe rows outliving the photographs they
       point at. Attach persistent storage and set `STORAGE_ROOT=/data/uploads`, or accept it
       knowingly.
+- [x] B10 — **REOPENED AND CLOSED AGAIN 2026-09-13.** It was closed in S5 on a hand
+      verification of `.env` and `.env.example`. That verification was wrong about the second
+      file, and nothing since could re-check it: the project's own `Read(./.env.*)` deny rule
+      meant no session could read it, which is the correct rule and also the reason a stale
+      "verified" stood for seven phases.
+      GitHub's push protection caught it on the first push, naming the file and the line: a
+      **live Groq API key** in `.env.example:16`, committed in S2 (`12d0fea`) and carried
+      through every commit after it. The push was refused rather than completed, which is the
+      only reason this is an incident and not a disclosure.
+      Closed by: rotating the key (user), purging the file from all 19 commits with
+      `git filter-repo`, and removing the `!.env.example` negation from `.gitignore` so it
+      cannot come back. The template it provided now lives in `docs/DEPLOYMENT.md`, which
+      lists every variable and cannot hold a value by accident because it is prose.
+      **Nothing here excuses the original mistake**, and the lesson is not "trust the
+      scanner". It is that a file the tooling is forbidden to read cannot be part of a
+      verification anybody relies on, and should therefore not be a file the repository
+      carries.
 - [ ] B22 — Migrations run at container start (`deploy/hf-space/entrypoint.sh`), which is
       correct for **one** instance and wrong for many: two replicas starting together race on
       the same revision. A Space is one instance, so it is the right trade there and would not

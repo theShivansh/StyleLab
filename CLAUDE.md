@@ -199,7 +199,11 @@ Vision is the product's front door, so extraction quality is worth the ~33% prem
 surface to the user, never a reason to retry on 3.6.
 
 Rules:
-- Model IDs appear in exactly two places: `.env.example` and the adapter config.
+- Model IDs appear in exactly two places: `docs/DEPLOYMENT.md` and the adapter config.
+  (It was `.env.example` until S12, when GitHub's secret scanner refused the first push:
+  a live key had been sitting in that file since S2. The file is purged from history and
+  no longer tracked — a template whose job is to hold variable names is one careless
+  paste from holding a value, and prose cannot be pasted into by accident.)
 - Verify configured model IDs against Groq's model list at boot and fail loudly there,
   not at a user's first request. Groq deprecates models on weeks of notice.
 - Never let a model ID string appear in a React component, a route handler, or a prompt

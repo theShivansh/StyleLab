@@ -955,6 +955,59 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-13 — A live key in `.env.example`, and why the file is gone
+
+Context:
+The first `git push` to GitHub was refused by push protection:
+
+```
+—— Groq API Key ——————————————————————————————————————
+ locations:
+   - commit: 12d0fea6c51dce14edf451d581dc5e404eeb5c5d
+     path: .env.example:16
+```
+
+A working Groq API key, committed in S2 and carried through every commit since. Blocker B10
+was closed in S5 on a hand verification of exactly this file, and that verification was
+wrong.
+
+What made it undetectable from inside:
+The project's `Read(./.env.*)` deny rule stops any session reading `.env` or `.env.example`.
+That rule is right — it is why no transcript across twelve phases contains the key. It also
+means **no session could ever check the file again**, so a verification made once in S5 stood
+unexamined while the file changed. Every secret scan run in S11 and S12 excluded it by
+construction, and reported the rest of the repository clean, which was true and useless.
+
+Decision:
+Rotate the key, purge `.env.example` from all 19 commits with `git filter-repo`, and delete
+the `!.env.example` negation from `.gitignore` so it is ignored like every other `.env.*`.
+It is not coming back sanitised.
+
+Why not simply blank it and keep it:
+Because the failure was not that somebody typed a key into a template — it is that the
+repository carried a file which (a) is *designed* to be one paste away from being a
+credential, and (b) the tooling is forbidden to inspect. Blanking it restores exactly that
+arrangement and waits.
+
+The thing the file provided is a list of variables with their defaults, and
+`docs/DEPLOYMENT.md` already does that better: every variable, its default, and what breaks
+without it. Prose cannot be pasted into by accident, and it is a file every check can read.
+
+Trade-offs:
+A fresh clone loses `cp .env.example .env`. In exchange it reads a page that explains what
+each variable does. Given that the alternative cost a live credential, that is not a close
+call.
+
+Follow-up, and the part worth not flinching from:
+The push was blocked by somebody else's scanner, not by anything this project does. Twelve
+phases of grounding tests, ownership proofs, adapter boundaries and a release audit, and the
+credential walked straight past all of it because it lived in the one file the rules said not
+to look at. A repository should not depend on a hosting provider to catch this. What has
+changed structurally is that the file no longer exists to be missed — which is a real fix,
+and a narrower one than "be more careful".
+
+---
+
 ### 2026-09-13 — S12: four defects that only a deployment finds
 
 Context:

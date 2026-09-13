@@ -14,7 +14,8 @@ wardrobe, and styles outfits from it. It sells nothing and links to no merchant.
 
 ```bash
 pnpm install
-cp .env.example .env          # then set GROQ_API_KEY
+# Create .env and set GROQ_API_KEY. Every variable, its default and what breaks
+# without it: docs/DEPLOYMENT.md. There is no tracked .env.example — see below.
 pnpm dev                      # web on :3000
 ```
 
