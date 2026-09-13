@@ -88,6 +88,7 @@ from app.services.jobs import (
     new_job_id,
 )
 from app.services.storage import ObjectStore, extension_for, storage_key
+from app.services.telemetry import GenerationEvent, GenerationLog, Outcome
 
 logger = logging.getLogger("stylelab.ingest")
 
@@ -163,6 +164,7 @@ class WardrobeIngestService:
         jobs: InMemoryJobStore,
         background: BackgroundJobs,
         limits: UploadLimits,
+        telemetry: GenerationLog | None = None,
     ) -> None:
         self._sessions = sessions
         self._store = store
@@ -170,6 +172,7 @@ class WardrobeIngestService:
         self._jobs = jobs
         self._background = background
         self._limits = limits
+        self._telemetry = telemetry
 
     # --- upload ---------------------------------------------------------------------
 
@@ -439,6 +442,35 @@ class WardrobeIngestService:
             # only runs that produce them would make `item_extractions` a log of successes.
             if attempts:
                 await self._record_attempts(user_id, item_id, attempts)
+            self._emit(attempts, user_id=user_id, job_id=job_id)
+
+    def _emit(
+        self, attempts: Sequence[AnalysisAttempt], *, user_id: str, job_id: str
+    ) -> None:
+        """One generation event per attempt, in the order they happened.
+
+        Per attempt rather than per photograph, because that is what makes `retry_rate` and
+        `fallback_calls` mean anything: a re-ask that succeeded is one failure and one
+        success, not one success. The attempts carry `raw_output` and the events do not —
+        the raw text belongs in our own audit table, never in telemetry
+        (`app/services/telemetry.py`).
+        """
+        if self._telemetry is None:
+            return
+        for index, attempt in enumerate(attempts, start=1):
+            self._telemetry.record(
+                GenerationEvent(
+                    operation="extraction",
+                    model=attempt.model,
+                    outcome=_extraction_outcome(attempt),
+                    latency_ms=attempt.latency_ms,
+                    attempt=index,
+                    used_fallback=attempt.used_fallback,
+                    request_id=attempt.request_id,
+                    job_id=job_id,
+                    user_id=user_id,
+                )
+            )
 
     async def _record_attempts(
         self, user_id: str, item_id: str, attempts: Sequence[AnalysisAttempt]
@@ -478,6 +510,21 @@ class WardrobeIngestService:
 # Free functions taking a `Session` rather than methods, so that what runs inside a
 # transaction is visible at the call site and nothing accidentally holds a session open
 # across an `await`.
+
+
+def _extraction_outcome(attempt: AnalysisAttempt) -> Outcome:
+    """One attempt's fate, in the telemetry vocabulary.
+
+    The three cases are distinguishable without reading the reason string, which is the
+    point of recording an empty `raw_output` for a refusal: no response arrived, so there is
+    nothing to have failed a schema. `AI_TIMEOUT` is split out because a slow provider and a
+    broken one need different responses (docs/OBSERVABILITY.md).
+    """
+    if attempt.schema_valid:
+        return "ok"
+    if attempt.raw_output:
+        return "schema_invalid"
+    return "timeout" if attempt.rejected_reason == "AI_TIMEOUT" else "provider_error"
 
 
 def _insert_asset_and_item(

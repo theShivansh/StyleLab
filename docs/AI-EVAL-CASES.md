@@ -2,6 +2,19 @@
 
 Regression fixtures. Every case runs against the mock provider and requires no API key.
 
+```bash
+pytest tests/ai -q                     # the gate
+python tests/ai/runner.py              # the same scenarios, printed
+python tests/ai/runner.py --coverage   # this list, with what evidences each case
+python tests/ai/runner.py --response FILE   # your own model output, through the real stack
+```
+
+Which cases are covered, partially covered or deferred is **not** recorded in this file. It
+is data in `tests/ai/cases.py`, resolved against the repository by
+`tests/ai/test_case_coverage.py` — every reference must name a symbol that is actually
+defined, or a file that actually carries the case's marker. A coverage claim written in prose
+here would go stale the first time a test was renamed, and nothing would say so.
+
 The grounding target moved with the wardrobe pivot: the model must not invent a garment
 **the user does not own**. That is a stricter test than the old SKU check, because it is
 also a security boundary — see Cases 01 and 11.

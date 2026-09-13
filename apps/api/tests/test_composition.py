@@ -225,3 +225,151 @@ async def test_a_rejected_advisor_response_is_recorded_with_its_reason(repo, stu
     rejection = service.rejections[0]
     assert rejection.reason == "ungrounded_item"
     assert "does-not-exist" in rejection.detail
+
+
+# --- the latency budget (AI-EVAL-CASES Case 23) ------------------------------------------
+
+
+async def test_an_advisor_that_exceeds_the_budget_degrades_to_the_ranker(repo, stubs):
+    """The floor of Case 23: an outfit and an honest note, never an unresolving spinner.
+
+    Worth stating why this ceiling exists at all, since the transport already has one. The
+    waits compound — three transport attempts inside two advisor attempts, each with its own
+    30-second client timeout — so "the provider is slow" can hold a compose open for minutes
+    with nothing above it aware that a person is watching.
+    """
+    advisor = stubs.SlowAdvisor(delay_s=5.0)
+    service = CompositionService(repo, advisor=advisor, latency_budget_s=0.02)
+
+    advice = await service.compose(U1, occasion="everyday")
+
+    assert advice.outfit is not None  # from the deterministic ranker, over the same items
+    assert advice.degradation_level == 4
+    assert [r.reason for r in service.rejections] == ["advisor_timeout"]
+
+
+async def test_the_budget_cancels_the_call_rather_than_abandoning_it(repo, stubs):
+    """An orphaned provider request holds a connection open and is still billed."""
+    advisor = stubs.SlowAdvisor(delay_s=5.0)
+
+    await CompositionService(repo, advisor=advisor, latency_budget_s=0.02).compose(
+        U1, occasion="everyday"
+    )
+
+    assert advisor.cancelled
+    assert not advisor.completed
+
+
+async def test_a_timeout_is_a_different_rejection_from_an_outage(repo, stubs):
+    """Both degrade; they are not the same problem and must not share a bucket.
+
+    A slow model is a capacity or prompt-size question. A failing one is an availability
+    question. A dashboard that merges them tells you an incident is happening and nothing
+    about which incident.
+    """
+    slow = CompositionService(repo, advisor=stubs.SlowAdvisor(delay_s=5.0), latency_budget_s=0.02)
+    broken = CompositionService(repo, advisor=stubs.FailingAdvisor())
+
+    await slow.compose(U1, occasion="everyday")
+    await broken.compose(U1, occasion="everyday")
+
+    assert [r.reason for r in slow.rejections] == ["advisor_timeout"]
+    assert [r.reason for r in broken.rejections] == ["advisor_unavailable"]
+
+
+async def test_no_budget_means_the_advisor_is_awaited_as_long_as_it_takes(repo, stubs):
+    """`latency_budget_s=None` is the default and is only ever right in a test.
+
+    Asserted so that the wiring in `app/main.py` is load-bearing: if the budget stopped
+    being passed, composition would silently go back to waiting forever and nothing else
+    would notice.
+    """
+    advisor = stubs.SlowAdvisor(
+        delay_s=0.0, response=stubs.ScriptedAdvisor.naming("top-1", "bottom-1", "shoe-1").response
+    )
+    service = CompositionService(repo, advisor=advisor)
+
+    advice = await service.compose(U1, occasion="everyday")
+
+    assert advisor.completed
+    assert advice.outfit is not None
+    assert service.rejections == []
+
+
+# --- generation telemetry ------------------------------------------------------------------
+
+
+async def test_a_successful_compose_records_one_event_with_its_depth(repo, stubs):
+    log = stubs.CollectingGenerationLog()
+    service = CompositionService(
+        repo,
+        advisor=stubs.ScriptedAdvisor.naming("top-1", "bottom-1", "shoe-1"),
+        telemetry=log,
+        job_id="job_1",
+    )
+
+    await service.compose(U1, occasion="everyday")
+
+    assert log.outcomes == ["ok"]
+    event = log.events[0]
+    assert (event.operation, event.degradation_level, event.job_id) == ("advice", 1, "job_1")
+    assert event.user_id == U1
+
+
+async def test_every_refusal_records_its_own_outcome(repo, stubs):
+    """A dashboard that only sees the calls that worked reports 100% forever."""
+    log = stubs.CollectingGenerationLog()
+
+    for advisor in (
+        stubs.ScriptedAdvisor.naming("top-1", "bottom-1", "does-not-exist"),  # ungrounded
+        stubs.ScriptedAdvisor.naming("top-1", "top-1", "shoe-1"),  # duplicate garment
+        stubs.SlowAdvisor(delay_s=5.0),  # over budget
+        stubs.FailingAdvisor(),  # provider outage
+    ):
+        await CompositionService(
+            repo, advisor=advisor, telemetry=log, latency_budget_s=0.02
+        ).compose(U1, occasion="everyday")
+
+    assert log.outcomes == [
+        "ungrounded_item",
+        "incompatible_outfit",
+        "timeout",
+        "provider_error",
+    ]
+
+
+async def test_a_call_that_never_reached_the_provider_is_not_given_the_last_ones_figures(
+    repo, stubs
+):
+    """The advisor outlives the request; its telemetry is the *last* call's.
+
+    Without the identity check in `_emit`, a provider outage would be recorded against
+    whatever model answered the previous user, with that call's latency — a fabricated
+    measurement, in the module whose entire purpose is not fabricating measurements.
+    """
+    from app.adapters.advice import AdviceTelemetry
+    from app.services.composition import UNREPORTED_MODEL
+
+    advisor = stubs.FailingAdvisor()
+    advisor.last_telemetry = AdviceTelemetry(model="eval/text", latency_ms=900)
+    log = stubs.CollectingGenerationLog()
+
+    await CompositionService(repo, advisor=advisor, telemetry=log).compose(
+        U1, occasion="everyday"
+    )
+
+    event = log.events[0]
+    assert event.model == UNREPORTED_MODEL
+    assert event.latency_ms == 0
+
+
+async def test_telemetry_is_optional_and_its_absence_changes_nothing(repo, stubs):
+    """No sink is a gap in a dashboard, never a difference in what the user is served."""
+    advisor = stubs.ScriptedAdvisor.naming("top-1", "bottom-1", "shoe-1")
+
+    with_log = await CompositionService(
+        repo, advisor=advisor, telemetry=stubs.CollectingGenerationLog()
+    ).compose(U1, occasion="everyday")
+    without = await CompositionService(repo, advisor=advisor).compose(U1, occasion="everyday")
+
+    assert with_log == without

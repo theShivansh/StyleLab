@@ -113,6 +113,11 @@ def test_it_prefers_the_occasion_it_was_asked_for(g):
 
 
 def test_it_prefers_the_requested_fit(g):
+    """Case 04 — preference adherence. A stated preference moves the ranking.
+
+    What it must not do is become a claim about the person: `fit_preference` is what the
+    user asked for, never a measurement of them (docs/AI-EVAL-CASES.md Case 04).
+    """
     items = [
         g("slim", category=C.TOP, fit="slim"),
         g("relaxed", category=C.TOP, fit="relaxed"),

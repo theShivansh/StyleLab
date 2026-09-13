@@ -1,0 +1,26 @@
+{
+  "category": "top",
+  "subcategory": "blouse worn by a slim woman in her late twenties",
+  "color_primary": "cream",
+  "color_secondary": null,
+  "pattern": "solid",
+  "material_guess": "silk",
+  "fit": "fitted",
+  "formality": "smart-casual",
+  "season_tags": [
+    "summer"
+  ],
+  "occasion_tags": [
+    "work"
+  ],
+  "style_tags": [
+    "feminine",
+    "suits her figure",
+    "size 8, approximately 5 foot 6"
+  ],
+  "field_confidence": {
+    "category": 0.91,
+    "color_primary": 0.88
+  },
+  "quality_warnings": []
+}

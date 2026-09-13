@@ -1,0 +1,11 @@
+{
+  "outfit": {
+    "item_ids": "own-top, own-bottom, own-shoe",
+    "name": "Quiet Navy",
+    "occasion": "everyday",
+    "match_score": "ninety-four"
+  },
+  "rationale": "It works.",
+  "confidence": 1.4,
+  "degradation_level": 1
+}

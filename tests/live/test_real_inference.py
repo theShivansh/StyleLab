@@ -92,6 +92,50 @@ async def test_a_real_extraction_satisfies_the_schema(transport, settings, paced
 
 
 @pytest.mark.smoke
+async def test_the_closed_vocabularies_survive_a_real_photograph(transport, settings, paced):
+    """S8 closed four list fields to an `enum` in the strict schema. Two questions only a
+    real call answers, and they pull in opposite directions.
+
+    First, does the provider *accept* it — a strict schema with an enum on array items is
+    exactly the kind of thing that validates locally and comes back 400. Second, and less
+    obvious: is the vocabulary wide enough that a real garment still gets described? A
+    vocabulary the model cannot fit a real photograph into would pass every mock-backed test
+    in `tests/ai/` and quietly return empty tags for every user, which is a worse outcome
+    than the leak it was closing.
+
+    So this asserts the model produced *something* in at least one list, and that everything
+    it produced is in the vocabulary. Not a specific tag: which adjectives a photograph
+    earns is the model's judgement, and pinning it would make this a flake.
+    """
+    from app.domain.vocabulary import OCCASION_TAGS, SEASON_TAGS, STYLE_TAGS
+
+    sample = _sample()
+    analyzer = GroqWardrobeAnalyzer(
+        transport,
+        model=settings.groq_vision_model,
+        fallback_model=settings.groq_vision_fallback_model,
+        urls=DataUrls(sample),
+    )
+
+    with tolerating_capacity():
+        extraction = await analyzer.analyze(
+            GarmentImage(asset_id="live", storage_key=sample.name)
+        )
+
+    produced = {
+        "style_tags": (extraction.style_tags, STYLE_TAGS),
+        "season_tags": (extraction.season_tags, SEASON_TAGS),
+        "occasion_tags": (extraction.occasion_tags, OCCASION_TAGS),
+    }
+    for field, (values, vocabulary) in produced.items():
+        assert set(values) <= vocabulary, f"{field} came back with {set(values) - vocabulary}"
+
+    assert any(values for values, _ in produced.values()), (
+        "every closed list came back empty — the vocabulary is too narrow for a real garment"
+    )
+
+
+@pytest.mark.smoke
 async def test_a_real_composition_stays_inside_the_candidate_set(transport, settings):
     """Grounding, against the live model rather than a fixture.
 

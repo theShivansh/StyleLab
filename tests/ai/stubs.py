@@ -147,6 +147,48 @@ class FailingAdvisor:
         raise self.error
 
 
+class SlowAdvisor:
+    """Takes longer than it is given. Drives the latency budget in `CompositionService`.
+
+    Records whether the sleep was cancelled, which is the property worth asserting: a budget
+    that gave up on the answer while the provider call carried on would still be holding a
+    connection and would still be billed for it.
+    """
+
+    def __init__(self, delay_s: float, response: OutfitAdvice | None = None) -> None:
+        self.delay_s = delay_s
+        self.response = response
+        self.cancelled = False
+        self.completed = False
+
+    async def advise(self, request: AdviceRequest) -> OutfitAdvice:
+        import asyncio
+
+        try:
+            await asyncio.sleep(self.delay_s)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        self.completed = True
+        if self.response is None:
+            raise AssertionError("SlowAdvisor was expected to be cancelled")
+        return self.response
+
+
+class CollectingGenerationLog:
+    """A `GenerationLog` that keeps what it is given, for asserting on the stream."""
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def record(self, event: Any) -> None:
+        self.events.append(event)
+
+    @property
+    def outcomes(self) -> list[str]:
+        return [event.outcome for event in self.events]
+
+
 class ScriptedAnalyzer:
     """Returns queued extractions in order, then repeats the last one."""
 
@@ -335,12 +377,14 @@ class FakeImageReferences:
 
 __all__ = [
     "FIXTURES",
+    "CollectingGenerationLog",
     "FailingAdvisor",
     "FakeImageReferences",
     "MockGroqProvider",
     "RecordedCall",
     "ScriptedAdvisor",
     "ScriptedAnalyzer",
+    "SlowAdvisor",
     "StaticTrendSource",
     "UnavailableTrendSource",
     "fixture",

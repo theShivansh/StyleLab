@@ -86,6 +86,7 @@ def pipeline(tmp_path, stubs, request):
     store = LocalObjectStore(tmp_path / "uploads")
     background = CollectingJobs()
     jobs = InMemoryJobStore()
+    telemetry = stubs.CollectingGenerationLog()
 
     service = WardrobeIngestService(
         sessions=sessions,
@@ -98,6 +99,7 @@ def pipeline(tmp_path, stubs, request):
         ),
         jobs=jobs,
         background=background,
+        telemetry=telemetry,
         limits=UploadLimits(
             max_bytes=10 * 1024 * 1024,
             max_images_per_batch=3,
@@ -114,6 +116,7 @@ def pipeline(tmp_path, stubs, request):
         jobs: InMemoryJobStore
         background: CollectingJobs
         sessions: Any
+        telemetry: Any
 
         def item(self, item_id: str, user_id: str = USER):
             with self.sessions() as session:
@@ -132,7 +135,7 @@ def pipeline(tmp_path, stubs, request):
             )
             return (await self.service.upload(user_id, [file]))[0]
 
-    yield Pipeline(service, transport, store, jobs, background, sessions)
+    yield Pipeline(service, transport, store, jobs, background, sessions, telemetry)
     engine.dispose()
 
 
@@ -599,3 +602,74 @@ async def test_a_category_hint_is_recorded_without_a_confidence_score(pipeline):
     stored = pipeline.item(outcome.item_id)
     assert stored.item.extraction.category is GarmentCategory.OUTERWEAR
     assert stored.item.extraction.field_confidence == {}
+
+
+# --- generation telemetry -------------------------------------------------------------------
+
+
+async def test_a_clean_extraction_records_one_event(pipeline):
+    outcome = await pipeline.upload_one()
+
+    await analyse(pipeline, outcome)
+
+    events = pipeline.telemetry.events
+    assert [e.outcome for e in events] == ["ok"]
+    assert events[0].operation == "extraction"
+    assert events[0].job_id == outcome.job_id
+    assert events[0].user_id == USER
+
+
+async def test_a_fallback_run_records_both_calls_and_marks_the_second(pipeline, stubs):
+    """One event per *call*, not per photograph.
+
+    That is what makes `fallback_calls` and `retry_rate` mean anything: a photograph that
+    took two calls is one failure and one success, not one success.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    pipeline.transport.default = None
+    pipeline.transport.script = {
+        settings.groq_vision_model: ProviderUnavailableError("down"),
+        settings.groq_vision_fallback_model: stubs.fixture("extraction_success.json"),
+    }
+    outcome = await pipeline.upload_one()
+
+    await analyse(pipeline, outcome)
+
+    events = pipeline.telemetry.events
+    assert [e.outcome for e in events] == ["provider_error", "ok"]
+    assert [e.used_fallback for e in events] == [False, True]
+    assert [e.attempt for e in events] == [1, 2]
+
+
+async def test_a_schema_failure_is_measured_as_one_and_not_as_an_outage(pipeline, stubs):
+    """The two are indistinguishable in a log line and need different people woken up.
+
+    The distinction is carried by the attempt itself — a refusal has no `raw_output`, because
+    no response arrived to have failed anything.
+    """
+    pipeline.transport.default = stubs.fixture("extraction_malformed.txt")
+    outcome = await pipeline.upload_one()
+
+    await analyse(pipeline, outcome)
+
+    assert {e.outcome for e in pipeline.telemetry.events} == {"schema_invalid"}
+
+
+async def test_no_event_carries_the_raw_output_the_audit_row_keeps(pipeline, stubs):
+    """The line between the audit trail and telemetry, asserted on the same failure.
+
+    `item_extractions` keeps what the model actually said, under the same retention as the
+    wardrobe it describes. Telemetry keeps the count, and goes to a third party.
+    """
+    pipeline.transport.default = stubs.fixture("extraction_malformed.txt")
+    outcome = await pipeline.upload_one()
+
+    await analyse(pipeline, outcome)
+
+    audit = pipeline.audit(outcome.item_id)
+    assert any(row.raw_output for row in audit), "the evidence must survive somewhere"
+
+    serialised = repr(pipeline.telemetry.events)
+    assert "oxford shi" not in serialised

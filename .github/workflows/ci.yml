@@ -46,6 +46,12 @@ jobs:
       - run: pip install -e "apps/api[dev]"
       - name: Grounding regression (stub adapters, no API key)
         run: pytest tests/ai -q
+      - name: Refusal harness (the same scenarios, as a reviewer sees them)
+        # The runner and the suite call the same functions, so this cannot disagree with the
+        # step above. It runs anyway: the report is the artefact somebody reads when the
+        # step above goes red, and a printer that is never exercised is a printer that
+        # breaks on the day it is needed.
+        run: python tests/ai/runner.py
       - name: Agent ablation (each role must change the output)
         run: pytest tests/ai/test_ablation.py -q
 

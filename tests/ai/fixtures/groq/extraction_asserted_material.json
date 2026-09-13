@@ -1,0 +1,27 @@
+{
+  "category": "top",
+  "subcategory": "crew knit",
+  "color_primary": "charcoal",
+  "color_secondary": null,
+  "pattern": "solid",
+  "material_guess": "100% merino wool",
+  "fit": "regular",
+  "formality": "smart-casual",
+  "season_tags": [
+    "winter"
+  ],
+  "occasion_tags": [
+    "everyday"
+  ],
+  "style_tags": [
+    "minimal"
+  ],
+  "field_confidence": {
+    "category": 0.98,
+    "subcategory": 0.94,
+    "color_primary": 0.93,
+    "material_guess": 0.99,
+    "fit": 0.91
+  },
+  "quality_warnings": []
+}

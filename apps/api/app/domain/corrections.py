@@ -42,6 +42,27 @@ CORRECTABLE_FIELDS: frozenset[str] = frozenset(
     }
 )
 
+#: Fields that read as a guess whatever the confidence score says.
+#:
+#: The floor decides the hedge for everything else: a model that is sure about a colour has
+#: usually seen the colour. Fibre content is different in kind — a photograph does not show
+#: what a garment is made of, so a high score there is confidence about an inference, not
+#: about an observation, and rendering it as settled fact is exactly what CLAUDE.md forbids
+#: ("never state fibre or material content as fact") and what AI-EVAL-CASES Case 08 lists
+#: under Fail.
+#:
+#: S8 found the product doing it: an extraction asserting "100% merino wool" at 0.99 cleared
+#: the floor and rendered with no hedge at all.
+#:
+#: A user correction still settles it — they can read their own care label, which is the one
+#: source that actually knows.
+#:
+#: Mirrored in `apps/web/src/lib/schemas/wardrobe.ts`, which is where the rule is *applied*,
+#: since the API renders nothing. That mirroring is the same arrangement as the upload
+#: limits and carries the same caveat: if a second renderer ever appears, this moves into
+#: the item payload rather than being copied a third time.
+ALWAYS_A_GUESS: frozenset[str] = frozenset({"material_guess"})
+
 
 def apply_correction(item: WardrobeItem, field: str, value: object) -> WardrobeItem:
     """Set one field by hand, record it, and drop its confidence score.
@@ -100,4 +121,4 @@ def merge_extraction(item: WardrobeItem, fresh: GarmentExtraction) -> WardrobeIt
     return item.model_copy(update={"extraction": GarmentExtraction.model_validate(merged)})
 
 
-__all__ = ["CORRECTABLE_FIELDS", "apply_correction", "merge_extraction"]
+__all__ = ["ALWAYS_A_GUESS", "CORRECTABLE_FIELDS", "apply_correction", "merge_extraction"]

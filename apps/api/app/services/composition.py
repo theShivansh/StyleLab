@@ -23,15 +23,31 @@ the ownership check, and a Critic agent that approved a response is not evidence
 There is no rung below 5. A curated fallback outfit would be made of garments the user does
 not own, which is precisely what the grounding rule forbids — so the ladder ends at an
 honest statement of what is missing.
+
+## The latency budget, and why it is enforced here
+
+Step 4 is the only step that waits on somebody else, and the waits compound. The transport
+retries a retryable failure three times with backoff, and the advisor re-asks once on a
+schema failure — so a fully patient compose is *six* provider calls, each with its own
+30-second client timeout. Nothing below this line has any idea it is inside a request a
+person is watching.
+
+So the budget is applied around the whole advisor call, once, from
+`AGENT_LATENCY_BUDGET_MS`. Exceeding it is a `timeout` rejection and a drop to the
+deterministic ranker over the same candidates, which is AI-EVAL-CASES Case 23's floor: the
+user gets an outfit and an honest note about reduced depth, never a spinner that does not
+resolve.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.adapters import OutfitAdvisor, TrendSource
+from app.adapters.advice import AdviceTelemetry, telemetry_of
 from app.domain.advisory import sanitize_advisory
 from app.domain.compatibility import CORE_ROLES, missing_roles
 from app.domain.errors import IncompatibleOutfitError, SchemaInvalidError, UngroundedItemError
@@ -48,8 +64,13 @@ from app.domain.ranker import DeterministicRanker
 from app.domain.scoring import match_score
 from app.domain.validation import validate_advice
 from app.repositories.wardrobe import WardrobeRepository
+from app.services.telemetry import GenerationEvent, GenerationLog, Outcome
 
 logger = logging.getLogger("stylelab.composition")
+
+#: Stands in for the model name on a call that produced no response at all — a transport
+#: outage, or the budget expiring before anything came back.
+UNREPORTED_MODEL = "unreported"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +106,16 @@ class CompositionService:
     ranker: DeterministicRanker = field(default_factory=DeterministicRanker)
     trend_source: TrendSource | None = None
     rejections: list[Rejection] = field(default_factory=list)
+    #: Wall-clock ceiling on the advisor call, from `AGENT_LATENCY_BUDGET_MS`. `None` waits
+    #: as long as the transport does, which is only ever right in a test.
+    latency_budget_s: float | None = None
+    #: Where the generation event goes. `None` records nothing and changes no behaviour.
+    telemetry: GenerationLog | None = None
+    #: Correlates the event with the job the user is watching. Composition runs as a job
+    #: (`app/services/compose.py`); the swap path passes nothing because it calls no model.
+    job_id: str | None = None
+    #: The advisor's telemetry as it stood *before* this request's call. See `_emit`.
+    _before_advice: AdviceTelemetry | None = field(default=None, init=False, repr=False)
 
     async def compose(
         self,
@@ -128,8 +159,12 @@ class CompositionService:
         )
 
         # 4..6 — advise, then validate what came back.
+        #
+        # Every branch below records a generation event before it returns, including the
+        # ones that raise. A dashboard that only sees the calls that worked reports a
+        # success rate of 100% forever.
         try:
-            advice = await self.advisor.advise(request)
+            advice = await self._advise(request)
             validated = validate_advice(advice, request=request)
         except UngroundedItemError as error:
             # An advisor naming an id we did not supply is a serious event whoever owns it.
@@ -141,6 +176,7 @@ class CompositionService:
             self.rejections.append(
                 Rejection(user_id=user_id, reason="ungrounded_item", detail=error.detail)
             )
+            self._emit("ungrounded_item", request)
             return self._degrade(request)
         except IncompatibleOutfitError as error:
             logger.warning(
@@ -151,18 +187,34 @@ class CompositionService:
                     user_id=user_id, reason="incompatible_outfit", detail="; ".join(error.reasons)
                 )
             )
+            self._emit("incompatible_outfit", request)
             return self._degrade(request)
         except SchemaInvalidError as error:
             logger.warning("advisor response failed the schema", extra={"reason": error.reason})
             self.rejections.append(
                 Rejection(user_id=user_id, reason="schema_invalid", detail=error.reason)
             )
+            self._emit("schema_invalid", request)
             return self._degrade(request)
-        except Exception:  # provider outage, timeout, framework error
+        except TimeoutError:
+            # Caught above the generic handler and named separately, because "the model was
+            # slow" and "the model was wrong" have different fixes and belong in different
+            # columns of the dashboard (Case 23).
+            logger.warning(
+                "advisor exceeded the latency budget; falling back to the ranker",
+                extra={"budget_s": self.latency_budget_s},
+            )
+            self.rejections.append(
+                Rejection(user_id=user_id, reason="advisor_timeout", detail="")
+            )
+            self._emit("timeout", request)
+            return self._degrade(request)
+        except Exception:  # provider outage, framework error
             logger.warning("advisor unavailable; falling back to the ranker", exc_info=True)
             self.rejections.append(
                 Rejection(user_id=user_id, reason="advisor_unavailable", detail="")
             )
+            self._emit("provider_error", request)
             return self._degrade(request)
 
         # 7 — drop unsupportable tips (ARCHITECTURE section 6). Removals are logged rather
@@ -171,9 +223,57 @@ class CompositionService:
         if dropped:
             logger.info("dropped unsupportable advisory content", extra={"dropped": dropped})
 
+        self._emit("ok", request, degradation=degradation)
         return self._rescore(cleaned, request, degradation)
 
     # --- internals ---------------------------------------------------------------------
+
+    async def _advise(self, request: AdviceRequest) -> OutfitAdvice:
+        """Step 4, inside the budget.
+
+        `asyncio.wait_for` cancels the underlying call rather than abandoning it, which
+        matters: an orphaned provider request holds a connection and still gets billed.
+        """
+        self._before_advice = telemetry_of(self.advisor)
+        if self.latency_budget_s is None:
+            return await self.advisor.advise(request)
+        return await asyncio.wait_for(self.advisor.advise(request), self.latency_budget_s)
+
+    def _emit(
+        self, outcome: Outcome, request: AdviceRequest, *, degradation: int | None = None
+    ) -> None:
+        """One generation event for the advice call that just finished, however it finished.
+
+        The advisor is long-lived and `last_telemetry` is the *last* call's, so a failure
+        that never reached the provider would otherwise be attributed the previous request's
+        model and latency. `_before_advice` is captured immediately before the call and the
+        two are compared by identity: same object means this call reported nothing.
+        """
+        if self.telemetry is None:
+            return
+
+        figures = telemetry_of(self.advisor)
+        if figures is not None and figures is self._before_advice:
+            figures = None
+
+        self.telemetry.record(
+            GenerationEvent(
+                operation="advice",
+                # No response arrived, so no model can be named. Not the configured id:
+                # that would be a guess presented as a measurement, in the one module whose
+                # whole job is not doing that.
+                model=figures.model if figures else UNREPORTED_MODEL,
+                outcome=outcome,
+                latency_ms=figures.latency_ms if figures else 0,
+                attempt=figures.attempt if figures else 1,
+                degradation_level=degradation,
+                prompt_tokens=figures.prompt_tokens if figures else None,
+                completion_tokens=figures.completion_tokens if figures else None,
+                request_id=figures.request_id if figures else None,
+                job_id=self.job_id,
+                user_id=request.user_id,
+            )
+        )
 
     def _retrieve(self, user_id: str) -> list[WardrobeItem]:
         if self.repository is None:

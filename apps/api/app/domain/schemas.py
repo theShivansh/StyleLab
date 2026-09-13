@@ -28,6 +28,7 @@ from pydantic import BaseModel, ValidationError
 from app.domain.corrections import CORRECTABLE_FIELDS
 from app.domain.errors import SchemaInvalidError
 from app.domain.models import GarmentExtraction, OutfitAdvice
+from app.domain.vocabulary import VOCABULARIES
 
 
 def _close_objects(node: Any) -> Any:
@@ -149,7 +150,25 @@ def _schema_for(model: type[BaseModel]) -> dict[str, Any]:
     return _require_all_properties(_close_objects(_inline_refs(schema)))
 
 
-EXTRACTION_JSON_SCHEMA: dict[str, Any] = _schema_for(GarmentExtraction)
+def _publish_vocabularies(schema: dict[str, Any]) -> dict[str, Any]:
+    """Put the closed vocabularies in front of the provider as `enum`.
+
+    CLAUDE.md asks for explicit enums, and these four fields are enumerations that were
+    typed as `list[str]` — see `app.domain.vocabulary` for what that cost. The domain type
+    stays tolerant on purpose: an off-vocabulary tag is dropped by hygiene rather than
+    failing the whole extraction, so this is guidance to the model and not the enforcement.
+
+    Sorted, because an unordered set would reorder the schema between processes and make two
+    identical deployments send two different prompts.
+    """
+    for field, vocabulary in VOCABULARIES.items():
+        target = schema["properties"].get(field)
+        if isinstance(target, dict) and isinstance(target.get("items"), dict):
+            target["items"]["enum"] = sorted(vocabulary)
+    return schema
+
+
+EXTRACTION_JSON_SCHEMA: dict[str, Any] = _publish_vocabularies(_schema_for(GarmentExtraction))
 EXTRACTION_JSON_SCHEMA["properties"]["field_confidence"] = _confidence_schema()
 
 ADVICE_JSON_SCHEMA: dict[str, Any] = _schema_for(OutfitAdvice)

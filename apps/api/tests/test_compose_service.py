@@ -253,9 +253,12 @@ def make_outfit(sessions, **preferences) -> str:
 async def test_a_swap_scores_against_the_preferences_the_look_was_composed_for(
     wardrobe, stubs
 ):
-    """The preferences are read off the outfit row, not defaulted. Without them a fifth of
-    the score would silently neutralise the moment a slot changed, and the number on screen
-    would move for a reason the user could not see."""
+    """Case 04 through the swap path.
+
+    The preferences are read off the outfit row, not defaulted. Without them a fifth of the
+    score would silently neutralise the moment a slot changed, and the number on screen would
+    move for a reason the user could not see.
+    """
     make_outfit(wardrobe, fit_preference="oversized")
     composer = composer_for(wardrobe, stubs.ScriptedAdvisor(outfit_advice()))
 
@@ -284,6 +287,11 @@ async def test_a_swap_scores_against_the_preferences_the_look_was_composed_for(
 
 
 async def test_a_swap_leaves_the_other_slots_in_place_and_in_order(wardrobe, stubs):
+    """Case 05 — one slot changes and the rest stay exactly as they were, in order.
+
+    Order matters as much as membership: a look whose remaining garments reshuffle around
+    the swapped one reads as a full rebuild, which is the thing Case 05 forbids.
+    """
     make_outfit(wardrobe)
     composer = composer_for(wardrobe, stubs.ScriptedAdvisor(outfit_advice()))
     before = await composer.result(U1, "o1")

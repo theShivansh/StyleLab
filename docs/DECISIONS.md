@@ -1524,3 +1524,222 @@ is the tier, not the pipeline.
 | Offer the garment already in the slot as its own alternative | caught, 2 tests |
 
 Nine run, nine caught.
+
+# S8 — AI evaluation harness (2026-09-13)
+
+Prompt 10 is a validation phase, not a feature phase. Its worth is measured in what it
+found, so that is what this section leads with.
+
+## The harness prints and asserts the same objects
+
+The acceptance criterion is that *a reviewer can intentionally make the model return an item
+the user does not own — or one belonging to another user — or malformed JSON, and watch the
+application refuse it*. Watching is the operative word: an assertion that passes silently is
+not something anybody can be shown.
+
+So a scenario returns a `Check` — what was injected, what was expected, what was observed,
+and the evidence — rather than asserting inline. `runner.py` prints them and
+`test_scenarios.py` asserts over them. One implementation, two audiences.
+
+The alternative, a demo script beside the test suite, is the arrangement where the demo
+passes while the product is broken. Both call `run_all()`, so they cannot disagree.
+
+`runner.py --response FILE` is the criterion taken literally. Write what you want the model
+to have said, point the runner at it, and watch. Nothing about the path differs from the
+built-in scenarios; the bytes are the only variable.
+
+## Coverage is resolved, not asserted
+
+A registry mapping the twenty-five cases to the code that evidences them would be worth
+nothing as prose — the failure mode is silent, because a renamed test leaves the claim
+standing and the next reader believes it.
+
+`test_case_coverage.py` resolves every entry. A `file::symbol` reference is checked with
+`ast`, so a mention in a comment does not count. A file-level reference must contain the
+string `Case NN` it is claimed for — which turns an existing convention in this repository
+into a constraint, because deleting the test deletes its marker and the claim fails with it.
+
+It earned its place on the first run: two entries written from memory were wrong.
+`test_composition.py` does not cover Case 03, and `test_prompt_contract.py` did not cover
+Case 09 until a docstring said so. Both were caught before the registry was ever printed.
+
+Three statuses rather than two. A binary covered/not would have forced five cases into the
+wrong box: the crew cases (18, 19, 20, 23) have their *property* asserted today and are
+missing the crew in front of it, which is neither "covered" nor "nothing". `partial`
+requires a note long enough to say which half is missing, and the meta-test enforces the
+length — a one-word note is how a partial silently becomes a covered.
+
+## What the harness found
+
+Four things, all of them shipped in this commit, plus one it could not fix.
+
+### 1. A fibre claim rendered as fact
+
+`isHedged` consulted the confidence floor and nothing else. An extraction asserting
+`material_guess: "100% merino wool"` at 0.99 cleared the floor and the garment card rendered
+it as a settled attribute — precisely the Fail clause of Case 08, and precisely what
+CLAUDE.md forbids.
+
+The floor was the wrong control for that field. A model confident about a colour has usually
+seen the colour; a photograph does not show fibre content at any confidence, so a high score
+there is confidence about an inference. `ALWAYS_A_GUESS` hedges it whatever the score says,
+and a user correction still settles it — they can read their own care label, which is the
+one source that actually knows.
+
+The rule is mirrored in `apps/api/app/domain/corrections.py` and
+`apps/web/src/lib/schemas/wardrobe.ts`, the same arrangement as the upload limits. The
+mirror is the risk, so the Case 08 scenario reads the constant out of the TypeScript source
+and fails if the two disagree. If a second renderer ever appears this moves into the item
+payload rather than being copied a third time.
+
+### 2. An invisible channel into the advice prompt
+
+`style_tags` is free text written by a vision model. It is **not** rendered on the garment
+card, and `app/adapters/prompts.py` interpolates it into the *advice* prompt. Worst possible
+combination: influential and unseen. The only thing standing in it was a 32-character
+ceiling.
+
+Two payloads went through. Case 07's injection survived as `"printed slogan reading ignore
+pr"` — truncated, and still attacker-influenced text arriving where a second model reads it.
+And a description of the person in the photograph, `"size 8, approximately 5 foot 6"`, which
+fitted comfortably inside the ceiling because a description of somebody's body is short.
+
+Length was the wrong control here too. What these fields actually are is enumerations that
+were typed as `list[str]`, so `app/domain/vocabulary.py` closes them: `style_tags`,
+`season_tags`, `occasion_tags` and `quality_warnings`.
+
+An allow-list rather than a deny-list, because it fails closed — the next phrasing of a body
+description and the next injection are both unknown, and both go. A deny-list would have to
+anticipate them and would strip legitimate garment vocabulary on a bad guess. The cost is
+that a real style word we did not think of is silently not shown, which is a much smaller
+harm than storing a stranger's estimate of somebody's dress size.
+
+The fields stay `list[str]` in the domain rather than becoming `Literal`. A `Literal` would
+make an unrecognised tag fail the whole extraction, turning a decorative word into a failed
+photograph. Instead the vocabulary reaches the provider as a schema `enum` — guidance the
+model is given, and what CLAUDE.md asks for anyway — and hygiene enforces it by filtering.
+Off-vocabulary output costs the tag, never the garment.
+
+This also replaced a weaker test with a stronger one. `test_hygiene.py` used to assert the
+injected slogan arrived *clipped*; it now asserts it does not arrive.
+
+### 3. A quality warning that reached the user meaningless
+
+Closing `quality_warnings` fixed a second, unrelated thing. The web renders each known
+warning as its own sentence and falls back to "Worth a second look" for anything else, and
+the model was free to invent one. An invented warning therefore reached the user looking
+like a quality signal with its meaning removed. The fixture in this repository had exactly
+that drift: `garment_partially_cropped` against a renderer that knows `cropped`.
+
+### 4. No ceiling on a compose
+
+The transport retries a retryable failure three times with backoff at a 30-second client
+timeout, inside an advisor that re-asks once on a schema failure. Six provider calls, and
+nothing above them had any idea a person was watching a spinner. `AGENT_LATENCY_BUDGET_MS`
+existed in config and was wired to nothing.
+
+It is now enforced around the whole advisor call, once, in `CompositionService`. Exceeding
+it is an `advisor_timeout` rejection and a drop to the deterministic ranker over the same
+candidates — Case 23's floor. `asyncio.wait_for` cancels rather than abandons, because an
+orphaned provider request holds a connection and is still billed.
+
+A timeout is a *different* rejection from an outage, deliberately. "The model was slow" and
+"the model was broken" have different fixes and belong in different columns.
+
+### What could not be fixed: free-text extraction fields
+
+A person description landing in `subcategory` or `pattern` is still stored — the fixture
+produces `"blouse worn by a slim woman in her late twen"`, bounded and intact. Those fields
+are open sets in the world; a garment really can be a "wrap midi skirt", and closing them
+would mean inventing a taxonomy of garments.
+
+The argument for leaving them is that they are **rendered on the card and correctable in one
+tap**, which is a different class of problem from a field only a downstream prompt ever
+sees. It is not nothing, and it is not resolved. Case 09 is `partial` and the residual is
+blocker B18.
+
+## Generation telemetry, and the metric we cannot emit
+
+Requirement 10 asks that generation events expose enough telemetry to measure quality and
+latency. Every metric in docs/OBSERVABILITY.md's AI list was derivable in principle from
+something — a log line, an `item_extractions` row, an `AdviceTelemetry` object the advisor
+set and nobody read — and computable in practice from none of them.
+
+One event type now, emitted by both generating paths, and one function that turns a stream
+of them into that list. `generation_metrics()` is product code rather than a test helper on
+purpose: a metric nothing computes is a metric nobody can be shown. The test that matters
+computes the whole list from a deliberately unhealthy stream and fails if any one of them is
+not computable — a field list would be satisfied by any field list.
+
+One event per **call**, not per request. A photograph that took two calls is one failure and
+one success, which is the only way `retry_rate` and `fallback_calls` mean anything.
+
+Three deliberate constraints:
+
+**Scalars only.** No garment text, no rationale, no raw output, no storage key. Enforced by
+walking the annotations, the same trick the browser-side analytics module uses. `raw_output`
+lives on `AnalysisAttempt` and goes to `item_extractions` — our own table, under the same
+retention as the wardrobe. An audit trail keeps the evidence; telemetry keeps the count, and
+telemetry is what gets shipped to a third party.
+
+**Estimated cost is tokens, never currency.** A price per token hardcoded in that module
+would be right for one plan on one day, would go stale silently, and would be believed.
+
+**"Cross-user ownership rejection" is not separable from "unowned-item grounding failure".**
+OBSERVABILITY asks for both. The domain cannot tell them apart and that is the design:
+`app/domain/validation.py` refuses an unexpected id *without looking it up*, so that no other
+user's id enters a query on the request path. Both arrive as `ungrounded_item`. Attribution
+belongs to the alerting layer, which has admin scope. The spec is now amended to say so
+rather than asking for something the architecture forbids.
+
+One subtlety worth recording because it fabricates measurements when missed: the advisor is
+long-lived and `last_telemetry` is the *last* call's. A provider outage that never reached
+the model would otherwise be recorded against whatever model answered the previous user,
+with that user's latency. `_emit` captures the object before the call and compares by
+identity — same object means this call reported nothing, and the event says `unreported`
+rather than guessing.
+
+## `AdviceTelemetry` moved out of the Groq adapter
+
+To `app/adapters/advice.py`, mirroring `analysis.py` and for the same reason:
+`app/services/composition.py` consumes it and must not import a provider-specific module.
+Nothing in those types names a vendor — a model id is a string, latency is an integer.
+
+It stays an attribute rather than a return value because it has to be readable after the
+call **raised**. A schema failure is the case most worth measuring and the one with no return
+value to hang figures on.
+
+## Mutations run
+
+| Mutation | Result |
+|---|---|
+| Drop the vocabulary filter from `clean_tags` | caught, 5 tests |
+| Keep the model's spelling instead of the canonical one | caught, 1 test |
+| Remove the latency budget from the advisor call | caught, 4 tests |
+| Report a timeout as `advisor_unavailable` | caught, 4 tests |
+| Emit a generation event only on success | caught, 1 test |
+| Attribute the previous call's telemetry to one that never reached the provider | caught, 1 test |
+| Let a `dict` field onto `GenerationEvent` | caught, 1 test |
+| Count anything that was not an outage as a success | caught, 2 tests |
+| Interpolate the p95 instead of taking the nearest rank | caught, 1 test |
+| Emit one extraction event per photograph instead of per call | caught, 1 test |
+| Let a `covered` case name no evidence | caught, 1 test |
+| Let a file-level claim pass without its `Case NN` marker | caught, 1 test |
+| Let `isHedged` fall through to the floor for `material_guess` | caught, 1 test (web) |
+| Resolve a coverage claim by substring instead of by `ast` | **survived**, then caught |
+
+Fourteen run. Thirteen caught on the first pass; the fourteenth survived and is worth
+recording, because the reason is instructive.
+
+The meta-test parses with `ast` so that a symbol *mentioned* in a comment does not count as
+a symbol *defined*. Swapping the parse for a substring check changed nothing, because every
+symbol the registry references also happens to appear literally in its own file — the two
+implementations agree on all valid data, and they differ only on the invalid data the test
+exists to reject. The `ast` call was doing work nobody could observe, which is the same
+thing as not doing it.
+
+Fixed by extracting the rule into `unresolved()` and driving it with a reference that should
+fail: a file that talks about `cross_user_item` in a comment, a docstring and a list without
+defining it. The mutation now dies. The general lesson — a check that cannot be pointed at
+bad input is a check with no evidence behind it — is the same one the ablation rule (Case
+21) is about, arriving from a different direction.

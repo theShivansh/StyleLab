@@ -87,9 +87,27 @@ export const jobStatusSchema = z.object({
     .optional(),
 });
 
+/**
+ * Fields that read as a guess whatever the confidence score says.
+ *
+ * The floor decides the hedge for everything else: a model confident about a colour has
+ * usually seen the colour. Fibre content is different in kind — a photograph does not show
+ * what a garment is made of, so a high score there is confidence about an inference rather
+ * than about an observation.
+ *
+ * S8's eval harness found the product presenting one as fact: an extraction asserting
+ * "100% merino wool" at 0.99 cleared the floor and rendered with no hedge, which is exactly
+ * the Fail clause of AI-EVAL-CASES Case 08 and the rule CLAUDE.md states outright.
+ *
+ * Mirrors `ALWAYS_A_GUESS` in `apps/api/app/domain/corrections.py`, the same way the upload
+ * limits mirror the API's.
+ */
+export const ALWAYS_A_GUESS: readonly string[] = ["material_guess"];
+
 /** True when a field should be presented as a hedge rather than a fact. */
 export function isHedged(item: WardrobeItem, field: string, floor: number): boolean {
   if (item.corrected_fields.includes(field)) return false; // the user settled it
+  if (ALWAYS_A_GUESS.includes(field)) return true; // no score settles this one
   const score = item.field_confidence[field];
   return score === undefined || score < floor;
 }

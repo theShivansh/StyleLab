@@ -84,6 +84,8 @@ def _flat(text: str) -> str:
 
 
 def test_the_vision_prompt_forbids_inferring_anything_about_a_person():
+    """Case 09, first layer. The prompt is where a compliant model is stopped; a
+    non-compliant one is stopped by the closed vocabularies in `app.domain.vocabulary`."""
     flat = _flat(VISION_SYSTEM)
     assert "do not describe, infer, or comment on any person" in flat
     assert "describe only the garment" in flat

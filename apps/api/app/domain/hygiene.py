@@ -21,9 +21,16 @@ and too plain to carry markup:
 * **bounded list length** — `style_tags` is a handful of words, not a corpus.
 * **no control characters** — newlines and escapes are what let injected text impersonate a
   prompt's own section headings once interpolated.
+* **a closed vocabulary on the list fields** — added in S8, when the eval harness showed
+  that length was the wrong control for them. `app.domain.vocabulary` says why: those
+  fields go into the *advice* prompt and are never rendered to the user, so a truncated
+  instruction and a stranger's estimate of somebody's dress size both survived a ceiling
+  and neither was ever seen by the person who could have objected.
 
-Fields are truncated rather than dropped. A truncated colour is still the user's garment
-and still correctable; discarding the field would lose a real reading over a length.
+Free-text fields are truncated rather than dropped. A truncated colour is still the user's
+garment and still correctable; discarding the field would lose a real reading over a length.
+List fields are the opposite — an unrecognised tag is dropped, because there is no user
+looking at it to notice that it should not be there.
 
 Nothing here is a substitute for the prompt rules or the SQL scope. It is the third layer,
 and it is the one that holds when the model is compliant and the content is still hostile.
@@ -34,6 +41,7 @@ from __future__ import annotations
 import re
 
 from app.domain.models import GarmentExtraction
+from app.domain.vocabulary import VOCABULARIES, permitted
 
 #: Per-field ceilings. Generous for what a garment actually is, far too small for a payload.
 FIELD_LIMITS: dict[str, int] = {
@@ -73,8 +81,19 @@ def clean_text(value: str | None, *, limit: int) -> str | None:
     return collapsed[:limit]
 
 
-def clean_tags(values: list[str], *, max_items: int = MAX_TAGS) -> list[str]:
-    """De-duplicated, bounded, order-preserving."""
+def clean_tags(
+    values: list[str], *, max_items: int = MAX_TAGS, field: str | None = None
+) -> list[str]:
+    """De-duplicated, bounded, order-preserving, and — for a closed field — filtered.
+
+    `field` names the vocabulary to enforce. Passing nothing filters nothing, which is the
+    right default for a caller cleaning an open list; every caller inside this module names
+    its field, so the closed ones cannot be cleaned by accident without their vocabulary.
+
+    Values are normalised to their canonical spelling rather than kept as the model wrote
+    them. "Minimal" and "minimal" are the same tag, and storing both spellings would make
+    the set useless for anything but display.
+    """
     seen: set[str] = set()
     cleaned: list[str] = []
     for value in values:
@@ -84,8 +103,10 @@ def clean_tags(values: list[str], *, max_items: int = MAX_TAGS) -> list[str]:
         key = tag.lower()
         if key in seen:
             continue
+        if field is not None and not permitted(field, key):
+            continue
         seen.add(key)
-        cleaned.append(tag)
+        cleaned.append(key if field in VOCABULARIES else tag)
         if len(cleaned) == max_items:
             break
     return cleaned
@@ -98,15 +119,20 @@ def sanitize_extraction(extraction: GarmentExtraction) -> GarmentExtraction:
     already constrained by the schema to a closed set, and a closed set needs no hygiene.
     `field_confidence` is numeric and validated by range. What is left is exactly the text
     a photograph can influence.
+
+    The four list fields are closed too, but by vocabulary rather than by type
+    (`app.domain.vocabulary` explains why they are not `Literal`), so unlike the enums they
+    are enforced here — the schema asks the provider for the vocabulary and this is what
+    holds it to it.
     """
     updates: dict[str, object] = {
         name: clean_text(getattr(extraction, name), limit=limit)
         for name, limit in FIELD_LIMITS.items()
     }
     for name in _TAG_FIELDS:
-        updates[name] = clean_tags(getattr(extraction, name))
+        updates[name] = clean_tags(getattr(extraction, name), field=name)
     updates["quality_warnings"] = clean_tags(
-        extraction.quality_warnings, max_items=MAX_WARNINGS
+        extraction.quality_warnings, max_items=MAX_WARNINGS, field="quality_warnings"
     )
     return extraction.model_copy(update=updates)
 

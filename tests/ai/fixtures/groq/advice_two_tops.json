@@ -1,0 +1,17 @@
+{
+  "outfit": {
+    "item_ids": [
+      "own-top",
+      "own-second-top",
+      "own-shoe"
+    ],
+    "name": "Double Up",
+    "occasion": "everyday",
+    "match_score": 91
+  },
+  "rationale": [
+    "Two shirts layered gives the look depth."
+  ],
+  "confidence": 0.88,
+  "degradation_level": 1
+}

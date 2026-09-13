@@ -59,6 +59,7 @@ from app.services.compose import OutfitComposer
 from app.services.ingest import UploadLimits, WardrobeIngestService
 from app.services.jobs import BackgroundJobs, InMemoryJobStore
 from app.services.storage import InlineImageSource, LocalObjectStore, ObjectStore
+from app.services.telemetry import LoggingGenerationLog
 
 logger = logging.getLogger("stylelab")
 
@@ -122,6 +123,10 @@ def create_app(
 
         app.state.jobs = InMemoryJobStore()
         app.state.background = BackgroundJobs()
+        # One sink for both generating paths, so `success_rate` means the same thing on
+        # each of them (docs/OBSERVABILITY.md, and `app/services/telemetry.py` on why the
+        # rollup is product code rather than a query somebody writes later).
+        app.state.generation_log = LoggingGenerationLog()
         app.state.ingest = WardrobeIngestService(
             sessions=app.state.sessions,
             store=app.state.store,
@@ -138,6 +143,7 @@ def create_app(
             ),
             jobs=app.state.jobs,
             background=app.state.background,
+            telemetry=app.state.generation_log,
             limits=UploadLimits(
                 max_bytes=settings.max_upload_bytes,
                 max_images_per_batch=settings.max_images_per_batch,
@@ -160,6 +166,11 @@ def create_app(
             # affairs — a source that returned nothing would report full depth for advice
             # that had no trend input.
             trend_source=None,
+            # The ceiling on the whole advisor call. Without it the waits compound — three
+            # transport attempts inside two advisor attempts, each with its own 30-second
+            # client timeout — and a compose nobody cancels can run for minutes.
+            latency_budget_s=settings.agent_latency_budget_ms / 1000,
+            telemetry=app.state.generation_log,
         )
 
         yield

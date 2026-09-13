@@ -24,8 +24,8 @@ the adapter's business.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
+from app.adapters.advice import AdviceTelemetry
 from app.adapters.prompts import ADVICE_SYSTEM, advice_user_message
 from app.adapters.transport import ChatMessage, ChatTransport, SchemaSpec
 from app.domain.models import AdviceRequest, OutfitAdvice
@@ -43,17 +43,6 @@ ADVICE_SCHEMA = SchemaSpec(
 )
 
 
-@dataclass(frozen=True, slots=True)
-class AdviceTelemetry:
-    """Per-call figures `docs/OBSERVABILITY.md` asks us to record."""
-
-    model: str
-    latency_ms: int
-    request_id: str | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
-
-
 class GroqOutfitAdvisor:
     """`OutfitAdvisor` over a `ChatTransport`."""
 
@@ -69,8 +58,12 @@ class GroqOutfitAdvisor:
         self._model = model
         self._timeout_s = timeout_s
         self._max_tokens = max_tokens
-        #: Last call's telemetry. Read by the caller for logging; not part of the Protocol,
+        #: Last call's telemetry, in the shape `app/adapters/advice.py` defines. Read by
+        #: the caller for its generation event; not part of the `OutfitAdvisor` Protocol,
         #: because the domain has no business knowing which model answered.
+        #:
+        #: Set **before** the response is parsed, so it survives the call raising. A schema
+        #: failure is the case most worth measuring and the one with no return value.
         self.last_telemetry: AdviceTelemetry | None = None
 
     async def advise(self, request: AdviceRequest) -> OutfitAdvice:
@@ -94,6 +87,7 @@ class GroqOutfitAdvisor:
                 request_id=result.request_id,
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
+                attempt=attempt + 1,
             )
 
             try:

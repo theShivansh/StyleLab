@@ -62,6 +62,7 @@ from app.services.jobs import (
     JobType,
     new_job_id,
 )
+from app.services.telemetry import GenerationLog
 
 logger = logging.getLogger("stylelab.compose")
 
@@ -134,6 +135,8 @@ class OutfitComposer:
         background: BackgroundJobs,
         trend_source: TrendSource | None = None,
         ranker: DeterministicRanker | None = None,
+        latency_budget_s: float | None = None,
+        telemetry: GenerationLog | None = None,
     ) -> None:
         self._sessions = sessions
         self._advisor = advisor
@@ -141,6 +144,8 @@ class OutfitComposer:
         self._background = background
         self._trend_source = trend_source
         self._ranker = ranker or DeterministicRanker()
+        self._latency_budget_s = latency_budget_s
+        self._telemetry = telemetry
 
     # --- compose ------------------------------------------------------------------------
 
@@ -205,6 +210,9 @@ class OutfitComposer:
                 advisor=self._advisor,
                 ranker=self._ranker,
                 trend_source=self._trend_source,
+                latency_budget_s=self._latency_budget_s,
+                telemetry=self._telemetry,
+                job_id=job_id,
             )
 
             await self._jobs.advance(job_id, COMPOSE_STAGES[3])  # building look

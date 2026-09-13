@@ -127,6 +127,24 @@ list above does not make obvious, each with a reason:
 The cache is scoped to one user. A global checksum index would deduplicate across wardrobes
 and hand one user another's extraction.
 
+### Closed vocabularies on the list fields
+
+`style_tags`, `season_tags`, `occasion_tags` and `quality_warnings` are enumerations that
+were typed as `list[str]`. They are closed by `app/domain/vocabulary.py`: the vocabulary
+reaches the provider as a schema `enum`, and `app/domain/hygiene.py` enforces it by filtering
+so that off-vocabulary output costs the tag rather than the photograph.
+
+The reason is specific to those fields. `style_tags` is written by a vision model, is **not**
+rendered on the garment card, and is interpolated into the *advice* prompt — influential and
+unseen. A 32-character ceiling was the only thing in it, and both a truncated injection and a
+description of the person in the photograph fit comfortably inside one. Length is the wrong
+control for a channel nobody looks at (docs/DECISIONS.md, S8).
+
+The free-text fields — `subcategory`, `pattern`, `color_primary`, `color_secondary`, `fit` —
+stay open, bounded by length. They are open sets in the world and they are rendered and
+correctable, so a bad value is visible to the user and fixable by them. Blocker B18 tracks
+the residue.
+
 ## 5. Orchestration — upload to wardrobe
 
 ```text
@@ -197,6 +215,13 @@ the ownership check, and a Critic agent that approved a response is not evidence
 
 Step 2 and step 6 are the grounding guarantee. Neither may be replaced by prompt wording.
 
+Step 5 runs inside a wall-clock budget (`AGENT_LATENCY_BUDGET_MS`), applied once around the
+whole advisor call and enforced in `CompositionService`. Nothing below that line knows a
+person is waiting: the transport retries three times at a 30-second client timeout, inside
+an advisor that re-asks once on a schema failure, so a fully patient compose is six provider
+calls. Exceeding the budget cancels the call — an abandoned request holds a connection and
+is still billed — and drops to step 9 over the same candidates.
+
 ## 7. Async jobs
 
 ```text
@@ -230,6 +255,11 @@ retry count · status · error class · extraction confidence · correction even
 **trend corpus age at time of use**.
 
 Do not record: raw image content · secrets · inferences about the person in a photo.
+
+Both generating paths emit one `GenerationEvent` per model call into a single
+`GenerationLog` (`app/services/telemetry.py`), and `generation_metrics()` rolls a stream of
+them into the AI list in docs/OBSERVABILITY.md. Events carry scalars only; the raw output
+stays on `item_extractions`, which is ours and under the wardrobe's retention.
 
 ## 10. Security boundaries
 
