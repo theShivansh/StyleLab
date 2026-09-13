@@ -18,7 +18,15 @@ dependencies = [
     # POST and the SDK would buy a second opinion about what a timeout means. httpx was
     # already here transitively; naming it makes the dependency honest.
     "httpx>=0.27",
-    "fastapi>=0.115",
+    # `[standard]` rather than bare, as of S13. It pulls `fastapi-cli`, which is the thing
+    # FastAPI Cloud actually runs: the platform imports the entrypoint below and serves it
+    # with `fastapi run`, so a deployment without the extra installs cleanly and then has no
+    # command to start. Bare `fastapi` was correct for a Dockerfile that named uvicorn
+    # itself; it is not correct for a platform that names nothing.
+    "fastapi[standard]>=0.115",
+    # Still declared explicitly although `fastapi[standard]` brings it: local development and
+    # `docs/DEPLOYMENT.md` both invoke uvicorn directly, and a dependency used by name should
+    # be a dependency stated by name.
     "uvicorn[standard]>=0.32",
     # Upper bound added in S12, by the release review, and it is not cosmetic. `crewai`
     # declares `pydantic<2.13,>=2.11.9`. This machine had 2.13.5 — installed by an emergency
@@ -60,6 +68,18 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.8",
 ]
+
+# Where the application object is, stated rather than discovered.
+#
+# FastAPI Cloud auto-detects `main.py`, `app.py` or `app/main.py`, and `app/main.py` is where
+# this one lives — so detection would find it today. It is written down anyway: the detection
+# list is the platform's, it can change, and the failure if it ever misses is an app that
+# builds and then has nothing to serve. One line here costs nothing and removes the guess.
+#
+# The same line is what makes `fastapi dev` work from `apps/api` with no path argument, which
+# is the platform's own stated test for whether a deployment will work.
+[tool.fastapi]
+entrypoint = "app.main:app"
 
 [build-system]
 requires = ["setuptools>=68"]

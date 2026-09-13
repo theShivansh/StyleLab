@@ -72,11 +72,11 @@ jobs:
           url="${API_BASE_URL%/}/internal/db-activity"
           echo "Checking ${url}"
 
-          # Three attempts with a widening pause. Not flakiness tolerance — a Hugging Face
-          # Space sleeps when idle and takes the better part of a minute to wake, so the
-          # first request of the day is *expected* to time out. A job that went red every
-          # morning for that reason would be a job everybody learned to ignore, which is
-          # worse than not having one.
+          # Three attempts with a widening pause. Not flakiness tolerance — the API scales
+          # to zero when idle, and a cold start there imports the agent framework on a
+          # fraction of a CPU, so the first request of the day is *expected* to time out. A
+          # job that went red every morning for that reason would be a job everybody learned
+          # to ignore, which is worse than not having one.
           attempt=1
           until [ "${attempt}" -gt 3 ]; do
             # The header goes in on **stdin**, via `--config -`, rather than as an argument.

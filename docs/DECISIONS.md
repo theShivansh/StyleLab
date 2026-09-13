@@ -955,6 +955,75 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-14 — FastAPI Cloud instead of a Hugging Face Space, and the two things it made wrong
+
+Context:
+The backend target changed before the Space was ever deployed. The Space artefacts — a
+Dockerfile, an entrypoint script, an upload script and twelve static tests — are deleted
+rather than kept as an alternative: a second deployment path nobody uses is a second
+deployment path that drifts, which is the same argument that removed `.env.example`.
+
+What the new platform removes:
+There is no Dockerfile, no start command and no port. FastAPI Cloud installs the project in
+the application directory and serves the entrypoint declared in `pyproject.toml`. Most of
+what the Space files carried — the non-root UID, the port matching the Space card, the
+executable bit that `upload_folder` does not preserve — stopped being facts anybody has to
+know.
+
+What it adds, and this is the part that mattered:
+The platform **scales to zero**, replaces containers on every release, runs up to two
+replicas, and puts a proxy in front. Two pieces of existing code were not merely suboptimal
+under those conditions. They were wrong.
+
+**1. Images on a container disk.** `LocalObjectStore` writes to `STORAGE_ROOT`. On a host
+that discards its filesystem when idle, the `assets` rows survive and the photographs do not
+— so the product looks like it remembers a wardrobe and then shows the user broken pictures
+of their own clothes. That is worse than losing the wardrobe outright, because it takes
+longer to notice and it looks like a bug in the user rather than in us.
+
+`DatabaseObjectStore` puts the bytes in the same Postgres as the rows. Not the bucket B20
+asks for, and it does not close B20: a database is the wrong long-term home for image bytes.
+It is what is reachable without adding a vendor, a credential and an adapter to a deployment
+that already has a Postgres, and unlike a mounted volume it is shared by both replicas. The
+`ObjectStore` Protocol took it without a single change above `app/services/storage.py`, which
+is the first evidence that the seam was real rather than decorative.
+
+**2. A rate limiter that could not see who was calling.** `POST /session` is keyed on the
+caller's address because there is no account to throttle instead (B15). Behind a proxy the
+socket peer is the proxy, so the quota — ten sessions per fifteen minutes — became one
+bucket for the entire internet. The eleventh visitor is refused, and the product looks broken
+to everybody at once, on the day somebody links to it.
+
+The fix is a **count of trusted proxies**, not a boolean. `X-Forwarded-For` grows on the
+right: each proxy appends the address it received the connection from, so the last entry is
+the one the nearest proxy wrote and the only one a caller cannot forge. `TRUSTED_PROXY_HOPS`
+counts back from that end. Reading the leftmost entry — the thing that looks equivalent, and
+the thing the old code's own comment warned against — is a limiter anyone switches off with a
+header, which is worse than no limiter because it looks like one. A wrong count falls back to
+the socket peer, so misconfiguration over-throttles rather than opening the door.
+
+Migrations, and why losing the entrypoint script is a gain:
+Blocker B22 said migrations at container start are right for one instance and wrong for many.
+The new platform has no start hook at all, so `alembic upgrade head` is a step an operator
+runs — and boot already refuses to serve a schema no revision describes, which makes a
+forgotten migration a failed deployment rather than a working site with a broken page. The
+platform keeps the previous version when verification fails, so the failure mode is a
+non-event. B22 closed by deletion.
+
+What was not fixed, and is written down instead:
+The Hobby plan is 0.1 CPU and 512 MB. Importing CrewAI takes fourteen seconds and ~190 MB on
+a developer machine; `MAX_IMAGE_PIXELS=40000000` allows one upload that decodes to ~160 MB.
+Neither is a defect today and both are measured rather than guessed — the arithmetic is in
+docs/DEPLOYMENT.md so that the first slow morning is a known thing rather than a mystery.
+
+The shape of all of this:
+The same shape S12 found four times. A fact that was true in one environment, never checked
+against the environment it had to hold in. The difference is that this time the environment
+changed under a codebase that was already correct for the old one, which is the ordinary way
+software becomes wrong without anybody editing it.
+
+---
+
 ### 2026-09-13 — A live key in `.env.example`, and why the file is gone
 
 Context:

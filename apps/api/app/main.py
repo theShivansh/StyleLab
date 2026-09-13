@@ -48,7 +48,7 @@ from app.adapters.exa_search import ExaSearchTransport
 from app.adapters.exa_trends import ExaTrendSource
 from app.adapters.groq_vision import GroqWardrobeAnalyzer
 from app.adapters.transport import ChatTransport
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db.session import create_all, get_engine, session_factory
 from app.deps import FaultError
 from app.logging_setup import install_log_redaction
@@ -65,7 +65,12 @@ from app.services.ingest import UploadLimits, WardrobeIngestService
 from app.services.jobs import BackgroundJobs, InMemoryJobStore
 from app.services.ratelimit import Limits
 from app.services.retention import RetentionSweeper
-from app.services.storage import InlineImageSource, LocalObjectStore, ObjectStore
+from app.services.storage import (
+    DatabaseObjectStore,
+    InlineImageSource,
+    LocalObjectStore,
+    ObjectStore,
+)
 from app.services.telemetry import LoggingGenerationLog, LoggingTrendLog
 
 logger = logging.getLogger("stylelab")
@@ -105,6 +110,20 @@ def _trend_source(settings, trend_log):
         cache_ttl_s=settings.trend_cache_ttl_s,
         telemetry=trend_log,
     )
+
+
+def _object_store(settings: Settings, sessions: sessionmaker[Session]) -> ObjectStore:
+    """The store this deployment asked for.
+
+    Two lines of dispatch kept out of the lifespan because the lifespan is already the
+    longest function in the project, and because `STORAGE_BACKEND` is a choice worth being
+    able to point at. `app/services/storage.py` carries the reasoning for the choice itself.
+    """
+    if settings.storage_backend == "database":
+        logger.info("image store: database")
+        return DatabaseObjectStore(sessions)
+    logger.info("image store: filesystem")
+    return LocalObjectStore(settings.storage_root)
 
 
 def create_app(
@@ -182,7 +201,8 @@ def create_app(
             app.state.engine = engine
             app.state.sessions = session_factory(engine)
 
-        app.state.store = store or LocalObjectStore(settings.storage_root)
+        # After `app.state.sessions`, because one of the two stores is built from it.
+        app.state.store = store or _object_store(settings, app.state.sessions)
 
         app.state.jobs = InMemoryJobStore()
         app.state.background = BackgroundJobs()
@@ -190,6 +210,10 @@ def create_app(
         # app/services/ratelimit.py). Built here with everything else so a test can reach in
         # and exhaust a bucket without waiting fifteen minutes for one to refill.
         app.state.limits = Limits.from_settings(settings)
+        # Read once at boot rather than per request: `app/deps.py` is the only reader, and a
+        # settings lookup on the hot path to learn a number that cannot change is a lookup
+        # with no purpose.
+        app.state.trusted_proxy_hops = settings.trusted_proxy_hops
         # One sink for both generating paths, so `success_rate` means the same thing on
         # each of them (docs/OBSERVABILITY.md, and `app/services/telemetry.py` on why the
         # rollup is product code rather than a query somebody writes later).

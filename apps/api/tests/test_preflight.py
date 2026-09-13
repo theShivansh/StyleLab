@@ -36,6 +36,7 @@ DEPLOYED = {
     "web_origin": "https://stylelab.example.com",
     "exa_api_key": "not-a-real-key",
     "supabase_url": "https://project.supabase.co",
+    "storage_backend": "database",
 }
 
 
@@ -47,6 +48,7 @@ PREFLIGHT_READS = (
     "web_origin",
     "exa_api_key",
     "supabase_url",
+    "storage_backend",
 )
 
 
@@ -190,14 +192,27 @@ def test_a_missing_trend_key_is_a_warning_in_production_not_a_refusal():
 def test_local_storage_in_production_warns_rather_than_refusing():
     """Honest about a gap rather than pretending it is closed.
 
-    `SupabaseObjectStore` does not exist (blocker B20). Making this fatal would mean no
-    deployment could start at all, so the check says what will happen — a deploy takes the
-    photographs with it unless a volume is mounted — and lets the operator decide.
+    Advisory rather than fatal because a mounted volume is a perfectly good answer and
+    preflight cannot see whether there is one. So the check says what will happen — a deploy
+    takes the photographs with it — and lets the operator decide.
     """
-    findings = verify_deployment(deployed(supabase_url=""))
+    findings = verify_deployment(deployed(storage_backend="local"))
 
-    assert settings_named(findings) == {"SUPABASE_URL"}
+    assert settings_named(findings) == {"STORAGE_BACKEND"}
     assert "volume" in findings[0].consequence
+
+
+def test_the_storage_warning_asks_about_the_store_and_not_about_supabase():
+    """The check this replaced keyed on `SUPABASE_URL`, which was the wrong question.
+
+    A deployment can have a Supabase project — this one does, for its database — and still
+    be writing photographs to a container disk that will not survive the next deploy. The
+    old check went quiet on exactly that arrangement, which is the arrangement S13 shipped
+    into.
+    """
+    findings = verify_deployment(deployed(supabase_url="", storage_backend="database"))
+
+    assert settings_named(findings) == set()
 
 
 @pytest.mark.parametrize(

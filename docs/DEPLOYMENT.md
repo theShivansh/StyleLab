@@ -33,7 +33,10 @@ generates 256 random bits and logs a warning, while `SESSION_SECRET=stylelab` is
 forges every token in the system to anyone who guesses the product name.
 
 **Warned, not fatal:** `EXA_API_KEY` (the Trend Scout is skipped and every composition
-discloses degradation 2 — outfits are unaffected) and `SUPABASE_URL` (see *Storage* below).
+discloses degradation 2 — outfits are unaffected) and `STORAGE_BACKEND` (see *Storage*
+below). The storage warning used to key on `SUPABASE_URL`, which was the wrong question: a
+deployment can have a Supabase project — this one does, for its database — and still be
+writing photographs to a container disk that will not survive the next release.
 
 ## Environment
 
@@ -82,13 +85,15 @@ RATE_LIMIT_WINDOW_S=900
 RATE_LIMIT_IMAGES=24               # images, not requests
 RATE_LIMIT_COMPOSES=12
 RATE_LIMIT_SESSIONS=10             # per client address
+TRUSTED_PROXY_HOPS=0               # proxies in front; 1 on a managed platform
 
 # Operations. Enables GET /internal/db-activity; unset means that endpoint answers 503.
 # Not a session secret and deliberately a separate variable — see "Database activity" below.
 DB_ACTIVITY_TOKEN=
 
 # Storage and identity
-STORAGE_ROOT=var/uploads
+STORAGE_BACKEND=local              # `local` or `database` — see "Storage" below
+STORAGE_ROOT=var/uploads           # only read when STORAGE_BACKEND=local
 STORAGE_BUCKET=stylelab-private
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -118,6 +123,25 @@ the browser, and CI must pass with it unset.
 ```bash
 cd apps/api && alembic upgrade head
 ```
+
+**Run by a person, from anywhere with the production `DATABASE_URL`.** FastAPI Cloud has no
+release phase and no start command to hang this on, and that is the right answer rather than
+a gap: the platform autoscales and rolls out gradually, so a migration at process start would
+race between instances, and old code and new code are live at the same time regardless.
+
+That means the ordering rule is the operator's to keep, and it is the ordinary one:
+
+- **adding** something (a column, a table) — migrate **before** deploying the code that uses
+  it, because the running old code must tolerate the new schema
+- **removing** something — deploy the code that stopped using it **first**, migrate after
+
+The 0002 migration is additive and unused by default, which is the easy case: apply it
+whenever, then set `STORAGE_BACKEND=database`.
+
+Nothing has to remember to check afterwards. Boot verifies the schema against the models and
+refuses to serve if they differ, so a deployment that went out ahead of its migration fails
+verification and the platform keeps the previous version running. A missed migration is a
+failed deploy rather than a working site with a broken page.
 
 `create_all` is **not** called when `APP_ENV=production` (S11). It would be actively
 harmful: it creates whatever is missing, which papers over a migration that did not run and
@@ -170,10 +194,16 @@ by hand and then `alembic stamp head`.
 stored bytes of any asset whose thirty-day window has closed, which is what makes
 `DELETE /wardrobe/items` true at the filesystem level rather than only in a column.
 
-It is in-process, so **a deployment that scales to zero must run the sweep as a scheduled
-job instead** — otherwise the timer simply never fires and deletion silently stops
-happening. The sweep is idempotent and safe to run concurrently, so two replicas both
-running it costs nothing.
+It is in-process, so on a platform that scales to zero the hourly timer stops with the
+instance. What saves it is that the sweep also runs **once at boot**, and a runtime that
+scales to zero boots often — every cold start is a sweep. The honest bound is therefore *an
+expired photograph is erased the next time somebody uses the product*, not *within an hour*,
+and an application nobody opens for a month erases nothing in that month.
+
+That is acceptable here and would not be under a deletion SLA. The fix if it ever matters is
+the same shape as `db-activity`: a scheduled workflow calling a token-protected endpoint. The
+sweep is idempotent and safe to run concurrently, so two replicas both running it costs
+nothing.
 
 ## Database activity
 
@@ -223,10 +253,34 @@ Or from GitHub: Actions → **DB activity** → Run workflow.
 
 ## Storage
 
-`LocalObjectStore` writes to `STORAGE_ROOT`, which must be a **mounted volume**. There is no
-hosted `ObjectStore` implementation yet (blocker B20), so a container with an ephemeral
-filesystem loses every photograph on the next deploy. Preflight warns about this rather than
-refusing, because refusing would mean no deployment could start at all.
+`STORAGE_BACKEND` picks one of two `ObjectStore` implementations. Nothing above
+`app/services/storage.py` knows which one it holds.
+
+| Value | Where bytes go | Correct when |
+|---|---|---|
+| `local` (default) | a directory at `STORAGE_ROOT` | a laptop, or a host with a volume mounted there |
+| `database` | an `asset_blobs` row in `DATABASE_URL` | a runtime with no durable disk |
+
+**On FastAPI Cloud it must be `database`.** Not as a preference — `local` there is wrong. The
+platform scales to zero when idle and replaces containers on every release, so the directory
+stops existing between two visits while the `assets` rows pointing into it do not. The
+product then looks like it remembers a wardrobe and shows broken pictures of it, which is a
+worse failure than losing the wardrobe outright because it takes longer to notice.
+
+A bucket would still be better and is still blocker B20. The database is what was reachable
+without adding a vendor, a credential and an adapter to a deployment that already has a
+Postgres — and unlike a volume, it is shared by every replica, which a disk is not.
+
+What it costs: one row per photograph, up to `MAX_UPLOAD_BYTES`. Postgres stores a `bytea`
+that size out of line and compresses it, and the ingest path stores a re-encoded image rather
+than the original upload, so the practical figure is a few hundred kilobytes each. Against a
+free tier's 500 MB that is roughly a thousand garments — comfortable for a demo, and the
+first thing to move to a bucket if this ever carries real use. The thirty-day retention sweep
+deletes these rows on exactly the same schedule as it deleted the files.
+
+Preflight warns when a production boot leaves `STORAGE_BACKEND=local` rather than refusing,
+because a mounted volume is a perfectly good answer and preflight cannot see whether there is
+one.
 
 ## Rate limiting
 
@@ -242,11 +296,20 @@ The buckets are in-process, so the limit is **per instance**: two replicas allow
 much. Size accordingly, or put a limiter in front. The interface takes a key and a cost, so
 Redis replaces the storage without touching a caller.
 
-Behind a proxy, run uvicorn with `--proxy-headers --forwarded-allow-ips=<proxy>`. The
-session limiter keys on `request.client.host`, and without that it sees the proxy's address
-for every caller — one shared bucket for the internet. The API deliberately does not read
-`X-Forwarded-For` itself: an unvalidated one is a limiter an attacker switches off by
-setting a header.
+**Behind a proxy, set `TRUSTED_PROXY_HOPS`.** The session limiter keys on the caller's
+address, and on a managed platform every request arrives from the platform — so left at `0`
+the whole internet shares one bucket and the eleventh visitor in fifteen minutes is refused a
+session. On FastAPI Cloud the value is `1`.
+
+It is a count of proxies rather than a switch because the entry to believe is the one the
+nearest trusted proxy appended, and `X-Forwarded-For` grows on the right. So the value counts
+back from the end: with one proxy in front, the last entry is the address that proxy saw,
+which is the one entry a caller cannot write. Reading the leftmost entry instead — the thing
+that looks equivalent — is a limiter anyone switches off with a header.
+
+A wrong value fails safe in the over-throttling direction: too many hops, or an entry that is
+not an IP address, falls back to the socket peer and everyone shares a bucket again. It never
+falls back to trusting something the caller chose.
 
 ## Response headers
 
@@ -277,21 +340,64 @@ deployment that sat idle can wake up broken.
 
 ## Hosting
 
-**Frontend:** Vercel. **Backend:** Railway, Render, or another managed container service —
-with a persistent volume for `STORAGE_ROOT` and a Postgres instance for `DATABASE_URL`.
+**Frontend:** Vercel, root directory `apps/web`. **Backend:** FastAPI Cloud, application
+directory `apps/api`. **Database:** Supabase Postgres.
+
+### The backend
+
+FastAPI Cloud builds from the directory holding `pyproject.toml`, installs the project, and
+serves `[tool.fastapi] entrypoint` with `fastapi run`. There is no Dockerfile, no start
+command and no port to choose, which removes most of what a deployment file usually carries
+and leaves four things this repository has to get right — each one checked by
+`apps/api/tests/test_deploy_fastapi_cloud.py`:
+
+| | Where |
+|---|---|
+| Application Directory `apps/api` | the dashboard, or app Settings |
+| `fastapi[standard]` in dependencies | `apps/api/pyproject.toml` — the bare package has no CLI to run |
+| `entrypoint = "app.main:app"` | `apps/api/pyproject.toml`, `[tool.fastapi]` |
+| `.python-version` | `apps/api/`, and it must match the version CI tests on |
+
+Connecting the GitHub repository deploys every push to the default branch. Only the default
+branch — there are no preview deployments for pull requests.
+
+Environment variables go in the dashboard or through `fastapi cloud env set --secret NAME
+VALUE`; the secret form cannot be read back afterwards, which is the right shape for
+`GROQ_API_KEY`, `SESSION_SECRET`, `DATABASE_URL` and `DB_ACTIVITY_TOKEN`.
+
+Set at minimum:
 
 ```bash
-uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port $PORT \
-  --proxy-headers --forwarded-allow-ips='*'
+APP_ENV=production
+STORAGE_BACKEND=database     # `local` has no durable disk here — see Storage
+TRUSTED_PROXY_HOPS=1         # or every visitor shares one rate-limit bucket
 ```
 
-`--forwarded-allow-ips='*'` is correct only when the container is reachable *exclusively*
-through the platform's proxy, which is the normal arrangement on both platforms above. If it
-is reachable directly, name the proxy instead — otherwise any caller can set their own
-address and the session limiter has no floor.
+### What the plan costs this application
+
+Worth knowing before the first slow morning, because none of it shows up as an error:
+
+- **Scale to zero.** An idle app stops. The next visitor waits for a cold start, and a cold
+  start here is not trivial: importing the agent framework takes about fourteen seconds on a
+  developer machine and the Hobby plan allows 0.1 CPU with a burst to 0.5. That import happens
+  during boot rather than during a request, so the platform absorbs it — but the first person
+  after a quiet spell waits for it.
+- **512 MB.** The application idles around 80 MB and reaches roughly 190 MB once CrewAI is
+  loaded. Decoding images is what is left, and `MAX_IMAGE_PIXELS=40000000` allows a single
+  upload that decodes to about 160 MB. A batch of large photographs is the plausible way to
+  run out of memory; lower that ceiling before raising anything else.
+- **Two replicas, maximum.** The rate-limit buckets are per instance, so the effective limit
+  is double what is configured.
 
 `GET /health` is liveness only and deliberately does not touch the provider: an outage is
 reported through the error envelope, not by making the container look dead.
+
+### The frontend
+
+Vercel, root directory `apps/web`, with `NEXT_PUBLIC_API_URL` set to the FastAPI Cloud origin.
+It is read at **build** time, so changing it is a rebuild rather than a restart — and it must
+match `WEB_ORIGIN` on the API in the other direction, or CORS refuses every request in a way
+that reads exactly like the API being down.
 
 ## CI secrets
 

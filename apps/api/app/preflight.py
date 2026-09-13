@@ -107,6 +107,11 @@ def verify_deployment(settings: Settings) -> list[Finding]:
 #: is on this list when leaving it wrong makes the deployment *incorrect*, not when it makes
 #: it less good. `EXA_API_KEY` is not here — the product composes outfits without trends and
 #: discloses the degradation, which is a documented state and not a broken one.
+#:
+#: `STORAGE_BACKEND` is not here either, and that one is a closer call since S13: left at
+#: `local` on a runtime with no volume, photographs really are lost. It stays advisory
+#: because a mounted volume is a perfectly good answer and preflight cannot see whether one
+#: is there — refusing would block the deployments that had already solved it.
 FATAL_IN_PRODUCTION = frozenset({"SESSION_SECRET", "DATABASE_URL", "WEB_ORIGIN"})
 
 #: Worth saying on a laptop too, because these two change what the application *does right
@@ -173,14 +178,16 @@ def _findings(settings: Settings) -> list[Finding]:
             )
         )
 
-    if not settings.supabase_url:
+    if settings.storage_backend != "database":
         findings.append(
             Finding(
-                "SUPABASE_URL",
-                "not set, so uploaded images are written to the local filesystem",
-                "same ephemerality as DATABASE_URL — a deploy takes the photographs with "
-                "it. Not fatal only because no hosted ObjectStore is implemented yet "
-                "(blocker B20); a deployment must mount a volume",
+                "STORAGE_BACKEND",
+                f"is {settings.storage_backend!r}, so uploaded images are written to the "
+                "container filesystem",
+                "a managed runtime replaces that filesystem on every deploy and discards it "
+                "when the app scales to zero, so the wardrobe rows outlive the photographs "
+                "they point at and a user is shown broken pictures of their own clothes. "
+                "Set STORAGE_BACKEND=database, or mount a volume at STORAGE_ROOT",
             )
         )
 

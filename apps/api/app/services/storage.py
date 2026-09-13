@@ -2,9 +2,14 @@
 
 ## The storage abstraction
 
-`ObjectStore` is the seam docs/ARCHITECTURE.md section 4 asks for. `LocalObjectStore`
-writes to a private directory; a `SupabaseObjectStore` lands with deployment in S11 and
-implements the same four methods. Nothing above this module knows which one it holds.
+`ObjectStore` is the seam docs/ARCHITECTURE.md section 4 asks for. `LocalObjectStore` writes
+to a private directory; `DatabaseObjectStore` writes to a table. Nothing above this module
+knows which one it holds, and `STORAGE_BACKEND` is how a deployment says.
+
+A bucket-backed store is still the destination (blocker B20) and still does not exist. The
+database one arrived in S13 for a narrower reason: the deployment target scales to zero and
+replaces containers, so `LocalObjectStore` there is not a weaker choice but an incorrect one
+— the wardrobe rows outlive the photographs they point at.
 
 Storage keys are derived from the owner and the asset id, never from the uploaded filename.
 A filename is user input, and user input that becomes a filesystem path is how a wardrobe
@@ -20,7 +25,7 @@ reference *it* can fetch. They are not the same problem and this module answers 
   servers cannot reach `localhost` and the storage directory is private. Nothing to leak:
   the bytes live in the request body and there is no URL afterwards.
 - **`SignedUrlImageSource`** — a signed URL against a store that issues them, for a hosted
-  deployment. S11.
+  deployment. Still unimplemented: neither store here can issue one.
 - **`browser_image_url`** — the `image_url` in an item payload. A path-embedded HMAC token
   over this API's own asset route.
 
@@ -45,6 +50,9 @@ import re
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.db.models import AssetBlobRow
 from app.security.identity import IMAGE_PURPOSE
 from app.security.tokens import TokenSigner
 from app.services.images import analysis_variant
@@ -92,6 +100,26 @@ _EXTENSIONS = {
 
 def extension_for(mime_type: str) -> str:
     return _EXTENSIONS.get(mime_type, "bin")
+
+
+def validated_key(key: str) -> tuple[str, str]:
+    """Split a storage key into its two segments, refusing anything malformed.
+
+    Shared by both stores rather than reimplemented in each. The filesystem store needs it
+    because a key becomes a path; the database store needs it because a key becomes a primary
+    key, and a store that will persist whatever string it is handed is a store that can be
+    made to hold rows nothing will ever read or delete.
+    """
+    parts = key.split("/")
+    if len(parts) != 2:
+        raise StorageError("malformed storage key")
+
+    user_part, file_part = parts
+    stem, _, extension = file_part.rpartition(".")
+    _safe_segment(user_part)
+    _safe_segment(stem)
+    _safe_segment(extension)
+    return user_part, file_part
 
 
 def _safe_segment(value: str) -> str:
@@ -145,20 +173,77 @@ class LocalObjectStore:
         `storage_key`: this method is the one that touches the filesystem, and a check
         placed anywhere else is a check someone can route around.
         """
-        parts = key.split("/")
-        if len(parts) != 2:
-            raise StorageError("malformed storage key")
-
-        user_part, file_part = parts
-        stem, _, extension = file_part.rpartition(".")
-        _safe_segment(user_part)
-        _safe_segment(stem)
-        _safe_segment(extension)
-
+        user_part, file_part = validated_key(key)
         candidate = (self._root / user_part / file_part).resolve()
         if not candidate.is_relative_to(self._root):
             raise StorageError("storage key escapes the storage root")
         return candidate
+
+
+class DatabaseObjectStore:
+    """`ObjectStore` over a table, for deployments with no durable filesystem.
+
+    The same four methods and the same keys as `LocalObjectStore`; a caller cannot tell which
+    one it has, which is the point of the Protocol and is what the shared contract tests in
+    `tests/test_storage.py` hold both of them to.
+
+    ### Why this exists
+
+    A managed runtime that scales to zero and replaces containers on every deploy has no disk
+    worth writing a photograph to. `LocalObjectStore` on such a host is not *slower* or *less
+    backed up* — it is wrong: the wardrobe rows outlive the images they point at, so the
+    product shows a user broken pictures of their own clothes. This keeps the bytes where the
+    rows already are, so the two cannot disagree about what exists.
+
+    ### Blocking calls inside `async def`
+
+    The same as `LocalObjectStore`, and tolerable for the same reason: it is the pattern the
+    whole application already uses — every route handler opens a synchronous session inside
+    an `async def` (see `app/routers/assets.py`). A single store that went async would not
+    make the request async; it would only make this module disagree with every other one. If
+    the event loop ever needs freeing, that change belongs at the session layer, once.
+    """
+
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        self._sessions = sessions
+
+    async def put(self, key: str, data: bytes, *, content_type: str) -> None:
+        validated_key(key)
+        with self._sessions() as session:
+            # `merge` rather than `add`: the key is derived from a freshly minted asset id,
+            # so a collision means the same upload arriving twice, and the honest answer to
+            # that is the newer bytes rather than an integrity error at the end of a retry.
+            session.merge(
+                AssetBlobRow(
+                    storage_key=key,
+                    content_type=content_type,
+                    data=data,
+                    byte_size=len(data),
+                )
+            )
+            session.commit()
+        logger.info("stored asset", extra={"bytes": len(data), "content_type": content_type})
+
+    async def get(self, key: str) -> bytes:
+        validated_key(key)
+        with self._sessions() as session:
+            row = session.get(AssetBlobRow, key)
+            if row is None:
+                raise StorageError("stored image could not be read")
+            return row.data
+
+    async def delete(self, key: str) -> None:
+        validated_key(key)
+        with self._sessions() as session:
+            row = session.get(AssetBlobRow, key)
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    async def exists(self, key: str) -> bool:
+        validated_key(key)
+        with self._sessions() as session:
+            return session.get(AssetBlobRow, key) is not None
 
 
 class InlineImageSource:
@@ -245,6 +330,7 @@ def browser_image_url(
 
 
 __all__ = [
+    "DatabaseObjectStore",
     "InlineImageSource",
     "LocalObjectStore",
     "ObjectStore",
@@ -255,4 +341,5 @@ __all__ = [
     "image_subject",
     "split_image_subject",
     "storage_key",
+    "validated_key",
 ]

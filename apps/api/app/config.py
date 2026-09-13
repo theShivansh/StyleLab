@@ -152,6 +152,21 @@ class Settings(BaseSettings):
     #: (blocker B15), so this is the only thing standing between a public URL and an
     #: unlimited supply of identities that can each spend the quotas above.
     rate_limit_sessions: float = 10
+    #: How many proxies sit in front of this API and can be believed about who called.
+    #:
+    #: `0` means none: the session limiter keys on the socket peer, which is right on a
+    #: laptop and on any host reachable directly. On a platform that terminates TLS and
+    #: forwards — FastAPI Cloud, and every other managed runtime — the socket peer is the
+    #: platform, so **every visitor on earth shares one bucket** and the eleventh person to
+    #: open the product in fifteen minutes is refused a session. That is the failure this
+    #: setting exists for, and it is not hypothetical: the quota above is 10.
+    #:
+    #: The value is a count of hops, not a switch, because the entry to believe is the one
+    #: the *nearest trusted proxy* appended. `app/deps.py` counts from the right, so a wrong
+    #: value degrades toward over-throttling (the proxy's own address, one shared bucket)
+    #: rather than toward an open door. Reading the leftmost entry instead — the thing that
+    #: looks equivalent — is a limiter any caller switches off with one header.
+    trusted_proxy_hops: int = 0
 
     # --- Storage / persistence ---
     #: Read as configured, which may be blank: `.env.example` ships the key with no value,
@@ -166,6 +181,18 @@ class Settings(BaseSettings):
     #: Where `LocalObjectStore` keeps uploaded images. Private directory, never under a web
     #: root, and gitignored.
     storage_root: str = "var/uploads"
+    #: Which `ObjectStore` holds the bytes (`app/services/storage.py`).
+    #:
+    #: `local` is a directory, and is right on a laptop and on any host with a volume mounted
+    #: at `STORAGE_ROOT`. `database` puts them in the same database as the wardrobe, which is
+    #: the only correct answer on a runtime that scales to zero and replaces containers: a
+    #: directory there stops existing between two visits, while the rows pointing into it do
+    #: not, and the user is shown broken pictures of clothes they own.
+    #:
+    #: Default `local` for the same reason every other default here leans that way — a fresh
+    #: clone should work and should keep its photographs somewhere a person can look at them.
+    #: Preflight says so when a production boot leaves it here.
+    storage_backend: Literal["local", "database"] = "local"
 
     # --- Identity and signed references ---
     #: HMAC key for session tokens and image URLs. Generated per process when unset, which

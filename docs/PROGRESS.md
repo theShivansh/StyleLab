@@ -22,6 +22,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S10 | Recruiter demo | 11 | skipped | — | — | Skipped by the user's instruction. docs/DEMO-SCRIPT.md exists and was updated in S11 with the measured pacing constraint. |
 | S11 | Harden + deploy | 08 | done | (this commit) | L T U I E B A AI | Release audit. **B12 and B16 closed.** Environment-aware boot (`APP_ENV`, `app/preflight.py`) that refuses production on a local default and refuses *any* environment on a schema mismatch; Alembic with a baseline revision and a drift test; rate limiting on the three paths that cost money; request ids; a retention sweep that makes deletion true on disk; whole-wardrobe deletion; response security headers. Seven defects found by running the thing rather than reading it — a stale local schema failing every upload, a CSP that blanked the dev server, a duplicated degradation disclosure, a raw enum in user-facing copy, an 18px touch target, a flaky ordering assertion, and a circuit breaker that made its own middle rung unreachable. The formatting gate, listed in every phase prompt, ran for the first time. 593 api + 109 ai-eval + 66 web unit + 64 e2e. Live: the whole path on real photographs — upload, extract, correct, compose, result — plus the ladder's middle rung measured at **4.4s** for Architect + Editor against a 15s budget, which is what the breaker change makes reachable. |
 | S12 | Final review + deploy | 13 | done | (this commit) | L T U I E B A AI | Review, then an actual deployment — which is what found the interesting things. **Four defects that only trying to ship reveals**: `pydantic 2.13.5` was outside CrewAI's declared range, so every local run had been green on a stack neither CI nor a container would resolve; `APP_ENV=development` — the conventional spelling — was refused by the setting S11 invented; `psycopg` was never a dependency while `docs/DEPLOYMENT.md` told operators to use it, so the image would have built for eight minutes and failed at boot; and `RATE_LIMITED` reached the web client as "the service is down" because S11 added the code to the API and not to the mirror that says it mirrors. Plus the Supabase keep-alive: a real `SELECT 1` connectivity endpoint and a daily workflow. Deployment artefacts for a Hugging Face Space, checked statically because there is no Docker here. 634 api + 109 ai-eval + 70 web unit + 64 e2e. |
+| S13 | Deploy: FastAPI Cloud | — | done | (this commit) | L T U I E B A | The backend target changed from a Hugging Face Space to FastAPI Cloud, and the platform is different in ways the application could feel: it **scales to zero**, replaces containers on every release, runs up to two replicas, and puts a proxy in front. Two of those made existing code wrong rather than merely suboptimal. `LocalObjectStore` on a host with no durable disk means the `assets` rows outlive the photographs they point at — so `DatabaseObjectStore` and migration 0002 put the bytes where the rows are. And the session limiter keyed on the socket peer means every visitor shares one bucket of ten per fifteen minutes — so `TRUSTED_PROXY_HOPS` counts hops from the right, which is the only end of the chain a caller cannot write. B22 closed by deletion (no container entrypoint left to race), B20 narrowed. 684 api + 109 ai-eval + 70 web unit. |
 
 States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip` · `skipped`
 
@@ -170,12 +171,19 @@ key, so it is a local-and-main gate rather than a per-push one.
       nobody can run is not an integration, and there is no Supabase project to verify it
       against. Preflight warns rather than refusing — refusing would mean no deployment could
       start at all. The seam is four methods and the same `ObjectStore` Protocol.
-      **Sharper after S12.** On a Hugging Face Space the container filesystem does not
-      survive a restart at all, so this stops being "images are not backed up" and becomes
-      "images last until the Space sleeps". The database no longer has this problem — S12
-      provisioned Postgres — which leaves the wardrobe rows outliving the photographs they
-      point at. Attach persistent storage and set `STORAGE_ROOT=/data/uploads`, or accept it
-      knowingly.
+      **Narrowed in S13, and the urgent half is closed.** The deployment target scales to
+      zero and replaces containers on every release, which turned this from "images are not
+      backed up" into "the wardrobe rows outlive the photographs they point at" — a product
+      that looks like it remembers and then shows a user broken pictures of their own
+      clothes. `DatabaseObjectStore` and migration 0002 close that: the bytes now live in the
+      same Postgres as the rows, shared by every replica, purged by the same retention sweep.
+      `STORAGE_BACKEND=database` selects it.
+      What is still open is the original blocker and no more: there is no **bucket**-backed
+      store. A database is the wrong long-term home for image bytes — it is charged as
+      database storage, it makes backups large, and it cannot serve a signed URL the provider
+      could fetch (which is why `SignedUrlImageSource` is still unimplemented). The seam is
+      unchanged: four methods and the same `ObjectStore` Protocol, with a second
+      implementation now proving the Protocol was real.
 - [x] B10 — **REOPENED AND CLOSED AGAIN 2026-09-13.** It was closed in S5 on a hand
       verification of `.env` and `.env.example`. That verification was wrong about the second
       file, and nothing since could re-check it: the project's own `Read(./.env.*)` deny rule
@@ -193,11 +201,14 @@ key, so it is a local-and-main gate rather than a per-push one.
       scanner". It is that a file the tooling is forbidden to read cannot be part of a
       verification anybody relies on, and should therefore not be a file the repository
       carries.
-- [ ] B22 — Migrations run at container start (`deploy/hf-space/entrypoint.sh`), which is
-      correct for **one** instance and wrong for many: two replicas starting together race on
-      the same revision. A Space is one instance, so it is the right trade there and would not
-      be on a platform that scales out. The fix when it matters is a release phase that runs
-      `alembic upgrade head` once before any instance starts.
+- [x] B22 — **CLOSED S13, by deletion.** Migrations ran at container start because the
+      Space had an entrypoint script to hang them on. FastAPI Cloud has neither a Dockerfile
+      nor a start command, so there is nothing to race: `alembic upgrade head` is a step an
+      operator runs, and boot refuses to serve a schema no revision describes, which turns a
+      forgotten migration into a failed deployment rather than a working site with a broken
+      page. The race this blocker described would have been *worse* on the new platform —
+      two replicas and gradual rollout — so the change is a genuine close rather than a
+      relocation.
 - [ ] B21 — The Content-Security-Policy carries `script-src 'unsafe-inline'`. Next inlines
       its bootstrap and its streamed flight data as `<script>` elements, so a strict policy
       needs a nonce plumbed through middleware. Named rather than quietly omitted: it is the

@@ -61,16 +61,20 @@ Read `docs/DEPLOYMENT.md` first. The short version: set `APP_ENV=production` and
 application will tell you, in one message, every setting still holding a local default that
 would be wrong in a container.
 
-Two targets are prepared:
+Three targets:
 
-| Part | Where | How |
-|---|---|---|
-| Web | Vercel | build `apps/web`; set `NEXT_PUBLIC_API_URL` at **build** time |
-| API | Hugging Face Space (Docker) | `python deploy/hf-space/prepare.py --space <owner>/<name>` |
+| Part | Where | Root directory | The thing that is easy to get wrong |
+|---|---|---|---|
+| Web | Vercel | `apps/web` | `NEXT_PUBLIC_API_URL` is read at **build** time, not at runtime |
+| API | FastAPI Cloud | `apps/api` | `STORAGE_BACKEND=database` and `TRUSTED_PROXY_HOPS=1` |
+| Database | Supabase Postgres | — | use the **session pooler** URL, scheme `postgresql+psycopg://` |
 
-The Space script assembles only `apps/api` plus a Dockerfile — never `.env`, never a
-database file — and uploads with whatever login `hf auth login` has. It handles no secret:
-the keys go in the Space's own settings page, by a human.
+There is no Dockerfile and no start command. FastAPI Cloud installs the project in
+`apps/api` and serves the entrypoint declared in its `pyproject.toml`; connecting the GitHub
+repository deploys every push to the default branch. `apps/api/tests/test_deploy_fastapi_cloud.py`
+holds the four facts that would otherwise only fail in a build log.
+
+Secrets are set in the dashboard by a human, never by a script and never in this repository.
 
 `GET /internal/db-activity` and `.github/workflows/db-activity.yml` keep a free Postgres from
 pausing, and are a real `SELECT 1` connectivity check rather than a ping — a sleeping or

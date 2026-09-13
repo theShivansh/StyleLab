@@ -33,6 +33,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -91,6 +92,53 @@ class AssetRow(Base):
     #: photograph still on a disk somewhere" with a query rather than a guess. Nullable, so
     #: it is also the flag: null means the retention window is still running.
     purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AssetBlobRow(Base):
+    """The bytes of one uploaded photograph, when the object store is the database.
+
+    `AssetRow` deliberately holds no bytes — the comment above it is still true, and this is
+    not a contradiction of it. The row that *describes* an asset and the row that holds its
+    content are different rows, in different tables, reached by different code, and nothing
+    joins them. `ObjectStore` is handed a key and returns bytes; whether that key resolves to
+    a file or to a row here is a deployment decision (`STORAGE_BACKEND`).
+
+    ### Why a table at all
+
+    Because the alternative, on a platform that scales to zero and replaces containers on
+    every deploy, is a directory that stops existing between two visits. The wardrobe rows
+    survive and the photographs they point at do not — the worst of the available outcomes,
+    because the product looks like it remembers and then shows broken images.
+
+    A bucket would be better and is still the intended destination (blocker B20). This is
+    what is reachable without adding a vendor, a credential and an adapter to a deployment
+    that already has a Postgres.
+
+    ### What it costs
+
+    Rows up to `MAX_UPLOAD_BYTES` each, in the same database as the wardrobe. On Postgres a
+    `bytea` that size is stored out of line and compressed by TOAST, so the table itself
+    stays small and a read is one extra fetch. It is still database storage being spent on
+    pixels — docs/DEPLOYMENT.md does the arithmetic against a free tier.
+
+    ### Not an owned row, deliberately
+
+    There is no `user_id` column here. Ownership is decided before this table is reached: the
+    caller presents a signed capability, the scoped query in `AssetRepository` returns the
+    asset only if that user owns it, and only then is the storage key handed to the store. A
+    `user_id` here would be a second, weaker copy of an authorisation that has already
+    happened — and the first thing somebody would reach for on the day they wanted to skip
+    the scoped read.
+    """
+
+    __tablename__ = "asset_blobs"
+
+    #: The `ObjectStore` key, which already encodes owner and asset (`storage_key()`).
+    storage_key: Mapped[str] = mapped_column(String(512), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(64))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    byte_size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class WardrobeItemRow(Base):

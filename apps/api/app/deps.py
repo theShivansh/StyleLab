@@ -13,6 +13,7 @@ cannot reach a user through a path that forgot to catch something.
 
 from __future__ import annotations
 
+from ipaddress import ip_address
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
@@ -82,15 +83,56 @@ def enforce(limiter: RateLimiter, key: str, *, cost: float = 1.0) -> None:
         raise FaultError(rate_limited(decision.retry_after_s))
 
 
+def forwarded_peer(header: str | None, *, hops: int) -> str | None:
+    """The caller's address according to `hops` trusted proxies, or `None`.
+
+    `X-Forwarded-For` is a list that grows on the right: each proxy appends the address it
+    received the connection from. So with one trusted proxy in front, the **last** entry is
+    the address that proxy saw — which is the real caller, and is the one entry a client
+    cannot write, because the proxy appends it after whatever the client sent. Everything to
+    the left of it is hearsay the client may have invented.
+
+    Hence counting from the right by the number of hops, rather than the thing that looks
+    equivalent and is not: reading the leftmost entry is a rate limiter anybody switches off
+    with a header, which is worse than no limiter because it looks like one.
+
+    Two refusals, both toward over-throttling rather than toward an open door:
+
+    * a chain shorter than `hops` means the request did not arrive the way the configuration
+      says it does, so nothing here is trustworthy
+    * an entry that is not an IP address is not used as a bucket key, so a caller cannot mint
+      unlimited distinct keys out of arbitrary text, and a misconfiguration lands on the
+      socket peer instead of on something a client chose
+    """
+    if hops <= 0 or not header:
+        return None
+    chain = [part.strip() for part in header.split(",") if part.strip()]
+    if len(chain) < hops:
+        return None
+    candidate = chain[-hops]
+    try:
+        ip_address(candidate)
+    except ValueError:
+        return None
+    return candidate
+
+
 def client_key(request: Request) -> str:
     """Who to charge when there is no user yet.
 
     Only `POST /session` needs this, and only because there is no account to throttle
-    instead (blocker B15). `request.client.host` is the socket peer: behind a proxy that is
-    the proxy unless uvicorn is run with `--proxy-headers --forwarded-allow-ips=...`.
-    Reading `X-Forwarded-For` here instead would be a limiter an attacker turns off by
-    setting a header, which is worse than none because it looks like protection.
+    instead (blocker B15). `request.client.host` is the socket peer, which is the right
+    answer whenever this API is reachable directly.
+
+    Behind a proxy the socket peer is the proxy, and the limiter becomes one bucket for the
+    internet — ten sessions per fifteen minutes, shared by every visitor. `TRUSTED_PROXY_HOPS`
+    is how a deployment says how many proxies it actually has; `forwarded_peer` explains why
+    that is a count and not a boolean. Unset, this behaves exactly as it did before.
     """
+    hops = getattr(request.app.state, "trusted_proxy_hops", 0)
+    forwarded = forwarded_peer(request.headers.get("x-forwarded-for"), hops=hops)
+    if forwarded is not None:
+        return forwarded
     return request.client.host if request.client else "unknown"
 
 
@@ -168,6 +210,7 @@ __all__ = [
     "composer",
     "current_user",
     "enforce",
+    "forwarded_peer",
     "ingest",
     "jobs",
     "limits",

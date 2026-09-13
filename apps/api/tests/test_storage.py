@@ -13,6 +13,7 @@ from app.security.identity import IMAGE_PURPOSE
 from app.security.tokens import TokenSigner
 from app.services.images import prepare_image
 from app.services.storage import (
+    DatabaseObjectStore,
     InlineImageSource,
     LocalObjectStore,
     ObjectStore,
@@ -32,27 +33,80 @@ def store(tmp_path):
     return LocalObjectStore(tmp_path / "uploads")
 
 
-# --- the store ----------------------------------------------------------------------------
+def _database_store(tmp_path):
+    from app.db.models import Base
+    from app.db.session import build_engine, session_factory
+
+    engine = build_engine(f"sqlite+pysqlite:///{(tmp_path / 'blobs.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    return DatabaseObjectStore(session_factory(engine))
 
 
-def test_the_local_store_satisfies_the_protocol(store):
-    assert isinstance(store, ObjectStore)
+@pytest.fixture(params=["local", "database"])
+def any_store(request, tmp_path):
+    """Both implementations, through one set of tests.
+
+    The Protocol is only worth having if the two are actually interchangeable, and the way to
+    find out is to run the same assertions against each rather than to write a second file
+    that drifts. A behaviour asserted here is a behaviour a caller may rely on without
+    knowing which store it holds.
+    """
+    if request.param == "local":
+        return LocalObjectStore(tmp_path / "uploads")
+    return _database_store(tmp_path)
 
 
-async def test_a_stored_object_comes_back_byte_identical(store):
+# --- the store contract, for both implementations -------------------------------------------
+
+
+def test_the_store_satisfies_the_protocol(any_store):
+    assert isinstance(any_store, ObjectStore)
+
+
+async def test_a_stored_object_comes_back_byte_identical(any_store):
     key = storage_key("user_1", "asset_1", extension="jpg")
-    await store.put(key, b"\xff\xd8\xffsome bytes", content_type="image/jpeg")
+    await any_store.put(key, b"\xff\xd8\xffsome bytes", content_type="image/jpeg")
 
-    assert await store.exists(key)
-    assert await store.get(key) == b"\xff\xd8\xffsome bytes"
+    assert await any_store.exists(key)
+    assert await any_store.get(key) == b"\xff\xd8\xffsome bytes"
 
 
-async def test_deleting_is_idempotent(store):
+async def test_deleting_is_idempotent(any_store):
     key = storage_key("user_1", "asset_1", extension="jpg")
-    await store.put(key, b"x", content_type="image/jpeg")
-    await store.delete(key)
-    await store.delete(key)
-    assert not await store.exists(key)
+    await any_store.put(key, b"x", content_type="image/jpeg")
+    await any_store.delete(key)
+    await any_store.delete(key)
+    assert not await any_store.exists(key)
+
+
+async def test_putting_the_same_key_twice_replaces_rather_than_raises(any_store):
+    """An upload retried after a timeout must not fail on the second attempt with an
+    integrity error the user sees as "something went wrong on our side"."""
+    key = storage_key("user_1", "asset_1", extension="jpg")
+    await any_store.put(key, b"first", content_type="image/jpeg")
+    await any_store.put(key, b"second", content_type="image/jpeg")
+
+    assert await any_store.get(key) == b"second"
+
+
+async def test_reading_a_missing_object_raises_a_storage_error(any_store):
+    with pytest.raises(StorageError):
+        await any_store.get(storage_key("user_1", "missing", extension="jpg"))
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["../../etc/passwd", "user_1/../../secret.jpg", "user_1", "a/b/c.jpg", "user_1/.jpg"],
+)
+async def test_a_malformed_key_is_refused_before_anything_is_stored(any_store, key):
+    """Both stores validate, not only the one where a key becomes a path.
+
+    In the database store a key becomes a primary key, and a store that persists whatever
+    string it is handed can be made to hold rows nothing will ever read or delete — which is
+    a quieter failure than a traversal but is the same missing check.
+    """
+    with pytest.raises(StorageError):
+        await any_store.put(key, b"x", content_type="image/jpeg")
 
 
 async def test_reading_a_missing_object_raises_without_naming_a_path(store):
@@ -61,6 +115,81 @@ async def test_reading_a_missing_object_raises_without_naming_a_path(store):
     # The message reaches a log and a log reaches somewhere else. No filesystem layout in it.
     assert "uploads" not in str(raised.value)
     assert str(store.root) not in str(raised.value)
+
+
+# --- the database store, on the property it exists for --------------------------------------
+
+
+async def test_the_database_store_keeps_nothing_in_the_process(tmp_path):
+    """The whole reason it exists.
+
+    A second `DatabaseObjectStore` over the same database sees what the first one wrote —
+    which is what a replacement container is, and what a second replica is. `LocalObjectStore`
+    on a host with no volume cannot do this, and that is not a performance difference: the
+    wardrobe rows outlive the photographs and the user is shown broken images.
+    """
+    from app.db.models import Base
+    from app.db.session import build_engine, session_factory
+
+    url = f"sqlite+pysqlite:///{(tmp_path / 'shared.db').as_posix()}"
+    engine = build_engine(url)
+    Base.metadata.create_all(engine)
+
+    key = storage_key("user_1", "asset_1", extension="jpg")
+    first = DatabaseObjectStore(session_factory(engine))
+    await first.put(key, b"pixels", content_type="image/jpeg")
+    engine.dispose()
+
+    reopened = build_engine(url)
+    try:
+        assert await DatabaseObjectStore(session_factory(reopened)).get(key) == b"pixels"
+    finally:
+        reopened.dispose()
+
+
+async def test_the_database_store_records_the_size_it_was_given(tmp_path):
+    """`byte_size` is denormalised on purpose: answering "how much database is this costing"
+    should not mean reading every photograph back out of it."""
+    from app.db.models import AssetBlobRow
+
+    store = _database_store(tmp_path)
+    key = storage_key("user_1", "asset_1", extension="jpg")
+    await store.put(key, b"x" * 1234, content_type="image/webp")
+
+    # Reaching past the interface on purpose: the point of the assertion is the row.
+    with store._sessions() as session:
+        row = session.get(AssetBlobRow, key)
+
+    assert row is not None
+    assert row.byte_size == 1234
+    assert row.content_type == "image/webp"
+
+
+# --- which store a deployment gets -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("backend", "expected"),
+    [("local", LocalObjectStore), ("database", DatabaseObjectStore)],
+)
+def test_the_setting_chooses_the_store(backend, expected, tmp_path):
+    """`STORAGE_BACKEND` is the only thing that decides, and it decides in one place.
+
+    Asserted because the alternative — inferring it from `DATABASE_URL` looking like Postgres,
+    or from `APP_ENV` — would be a deployment silently changing where a user's photographs
+    live based on something that reads like it is about a database.
+    """
+    from app.config import Settings
+    from app.main import _object_store
+
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        groq_api_key="not-a-real-key",
+        storage_backend=backend,
+        storage_root=str(tmp_path / "uploads"),
+    )
+
+    assert isinstance(_object_store(settings, _database_store(tmp_path)._sessions), expected)
 
 
 async def test_no_partial_file_is_left_behind_under_the_key(store):

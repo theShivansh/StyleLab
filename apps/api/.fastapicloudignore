@@ -1,0 +1,10 @@
+# What FastAPI Cloud should not upload from `apps/api`.
+#
+# `.gitignore` already keeps out virtualenvs, caches and build metadata; this file is only
+# for things that are tracked on purpose and have no business in a running deployment.
+#
+# The suite is the largest thing in this directory and the platform installs the project
+# without its `[dev]` extra, so pytest is not there to run it anyway. CI runs the tests
+# (.github/workflows/ci.yml) — that is where a red build should come from, not from a box
+# with 512 MB of memory.
+tests/
