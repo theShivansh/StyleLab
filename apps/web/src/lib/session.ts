@@ -8,7 +8,10 @@ import { config } from "./config";
  * ## What this is not
  *
  * Not authentication. `POST /session` hands a token to anyone who asks — there is no
- * password and no verification. Real accounts arrive with Supabase auth in S11.
+ * password and no verification. Real accounts remain unbuilt (blocker B15) — S11
+ * deliberately did not add them, because the phase's own acceptance criterion is that a
+ * visitor reaches a composed outfit *with no account and no credentials*. What S11 did
+ * instead was rate-limit session creation, so free identities stop being free quota.
  *
  * What matters now is the shape, because the shape is what the ownership boundary rests on.
  * The browser **cannot choose which user it is**: it holds a token or it does not, and the

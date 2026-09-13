@@ -10,11 +10,30 @@ handler, a domain module, or a prompt template.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: The local default. File-backed so a fresh clone runs and its wardrobe survives a restart.
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./stylelab.db"
+
+#: What the application actually distinguishes: two behaviours, in `app/preflight.py`.
+Environment = Literal["local", "production"]
+
+#: Spellings people actually write, mapped to the two the application has. `development` is
+#: here because it is the conventional value and S12 found it failing; `staging` maps to
+#: `production` deliberately — a staging deployment has the same ephemeral filesystem and the
+#: same shared signing key as a real one, and is exactly where those defaults should be caught.
+ENV_SYNONYMS = {
+    "local": "local",
+    "development": "local",
+    "dev": "local",
+    "test": "local",
+    "ci": "local",
+    "production": "production",
+    "prod": "production",
+    "staging": "production",
+    "stage": "production",
+}
 
 
 class Settings(BaseSettings):
@@ -31,7 +50,14 @@ class Settings(BaseSettings):
     #: on three settings nobody has heard of yet; the cost of this direction is one
     #: environment variable in a deploy config, which is the one place somebody is already
     #: setting environment variables.
-    app_env: Literal["local", "production"] = "local"
+    #:
+    #: **Synonyms are accepted and normalised**, which S12 added after the obvious thing
+    #: happened: somebody set `APP_ENV=development` — the most common spelling of this
+    #: variable anywhere — and the API stopped booting with a pydantic literal error about a
+    #: value that was, by every convention outside this file, correct. A setting invented in
+    #: S11 that rejects the industry-standard value for itself is the setting's bug, not the
+    #: operator's.
+    app_env: Environment = "local"
 
     # --- Groq. Required; see docs/DECISIONS.md (B5) for the model choice. ---
     groq_api_key: str = Field(min_length=1)
@@ -146,12 +172,43 @@ class Settings(BaseSettings):
     #: How long an image URL handed to the browser stays valid.
     image_url_ttl_s: int = 60 * 30
 
+    #: Operations credential for `GET /internal/db-activity` (`app/routers/internal.py`).
+    #: Empty means the endpoint answers 503 rather than answering at all — unconfigured is
+    #: closed, not open, because the alternative leaves a database-touching route reachable
+    #: by anyone the moment somebody forgets a variable.
+    #:
+    #: Not a session secret and deliberately a different variable: an operations credential
+    #: and a user identity should not be interchangeable, and this one lives in a CI secret
+    #: store rather than in the application's own signing key.
+    db_activity_token: str = ""
+
     # --- Web ---
     #: Browser origin allowed to call this API with credentials.
     web_origin: str = "http://localhost:3000"
 
     #: Below this, a field is presented as a hedge and offered for correction.
     confidence_floor: float = 0.7
+
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _normalise_env(cls, value: object) -> object:
+        """Accept the spellings people write; refuse the ones nobody means.
+
+        An unknown value is still an error, and deliberately so — silently treating
+        `APP_ENV=produciton` as local would switch off every production check over a typo,
+        which is the failure this whole mechanism exists to prevent. The message names what
+        is accepted, because a literal error listing two values when nine are allowed is a
+        message that sends somebody to read the source.
+        """
+        if not isinstance(value, str):
+            return value
+        key = value.strip().lower()
+        if not key:
+            return "local"
+        if key not in ENV_SYNONYMS:
+            allowed = ", ".join(sorted(ENV_SYNONYMS))
+            raise ValueError(f"APP_ENV={value!r} is not one of: {allowed}")
+        return ENV_SYNONYMS[key]
 
     @property
     def resolved_database_url(self) -> str:

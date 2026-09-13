@@ -21,7 +21,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S9 | Planner + analytics | 07 | skipped | — | — | Skipped by the user's instruction, S11 taken first. The **analytics** half was not skipped with it: S11's audit found the whole capture side of the funnel uninstrumented and built it (`images_selected` through `wardrobe_cleared`), which is the part docs/ANALYTICS.md calls the entire cold-start risk. The **planner** is genuinely not built and `flags.planner` is `false`. |
 | S10 | Recruiter demo | 11 | skipped | — | — | Skipped by the user's instruction. docs/DEMO-SCRIPT.md exists and was updated in S11 with the measured pacing constraint. |
 | S11 | Harden + deploy | 08 | done | (this commit) | L T U I E B A AI | Release audit. **B12 and B16 closed.** Environment-aware boot (`APP_ENV`, `app/preflight.py`) that refuses production on a local default and refuses *any* environment on a schema mismatch; Alembic with a baseline revision and a drift test; rate limiting on the three paths that cost money; request ids; a retention sweep that makes deletion true on disk; whole-wardrobe deletion; response security headers. Seven defects found by running the thing rather than reading it — a stale local schema failing every upload, a CSP that blanked the dev server, a duplicated degradation disclosure, a raw enum in user-facing copy, an 18px touch target, a flaky ordering assertion, and a circuit breaker that made its own middle rung unreachable. The formatting gate, listed in every phase prompt, ran for the first time. 593 api + 109 ai-eval + 66 web unit + 64 e2e. Live: the whole path on real photographs — upload, extract, correct, compose, result — plus the ladder's middle rung measured at **4.4s** for Architect + Editor against a 15s budget, which is what the breaker change makes reachable. |
-| S12 | Final review | 13 | todo | — | — | review only |
+| S12 | Final review + deploy | 13 | done | (this commit) | L T U I E B A AI | Review, then an actual deployment — which is what found the interesting things. **Four defects that only trying to ship reveals**: `pydantic 2.13.5` was outside CrewAI's declared range, so every local run had been green on a stack neither CI nor a container would resolve; `APP_ENV=development` — the conventional spelling — was refused by the setting S11 invented; `psycopg` was never a dependency while `docs/DEPLOYMENT.md` told operators to use it, so the image would have built for eight minutes and failed at boot; and `RATE_LIMITED` reached the web client as "the service is down" because S11 added the code to the API and not to the mirror that says it mirrors. Plus the Supabase keep-alive: a real `SELECT 1` connectivity endpoint and a daily workflow. Deployment artefacts for a Hugging Face Space, checked statically because there is no Docker here. 634 api + 109 ai-eval + 70 web unit + 64 e2e. |
 
 States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip` · `skipped`
 
@@ -170,6 +170,17 @@ key, so it is a local-and-main gate rather than a per-push one.
       nobody can run is not an integration, and there is no Supabase project to verify it
       against. Preflight warns rather than refusing — refusing would mean no deployment could
       start at all. The seam is four methods and the same `ObjectStore` Protocol.
+      **Sharper after S12.** On a Hugging Face Space the container filesystem does not
+      survive a restart at all, so this stops being "images are not backed up" and becomes
+      "images last until the Space sleeps". The database no longer has this problem — S12
+      provisioned Postgres — which leaves the wardrobe rows outliving the photographs they
+      point at. Attach persistent storage and set `STORAGE_ROOT=/data/uploads`, or accept it
+      knowingly.
+- [ ] B22 — Migrations run at container start (`deploy/hf-space/entrypoint.sh`), which is
+      correct for **one** instance and wrong for many: two replicas starting together race on
+      the same revision. A Space is one instance, so it is the right trade there and would not
+      be on a platform that scales out. The fix when it matters is a release phase that runs
+      `alembic upgrade head` once before any instance starts.
 - [ ] B21 — The Content-Security-Policy carries `script-src 'unsafe-inline'`. Next inlines
       its bootstrap and its streamed flight data as `<script>` elements, so a strict policy
       needs a nonce plumbed through middleware. Named rather than quietly omitted: it is the

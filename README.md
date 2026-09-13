@@ -60,6 +60,21 @@ Read `docs/DEPLOYMENT.md` first. The short version: set `APP_ENV=production` and
 application will tell you, in one message, every setting still holding a local default that
 would be wrong in a container.
 
+Two targets are prepared:
+
+| Part | Where | How |
+|---|---|---|
+| Web | Vercel | build `apps/web`; set `NEXT_PUBLIC_API_URL` at **build** time |
+| API | Hugging Face Space (Docker) | `python deploy/hf-space/prepare.py --space <owner>/<name>` |
+
+The Space script assembles only `apps/api` plus a Dockerfile — never `.env`, never a
+database file — and uploads with whatever login `hf auth login` has. It handles no secret:
+the keys go in the Space's own settings page, by a human.
+
+`GET /internal/db-activity` and `.github/workflows/db-activity.yml` keep a free Postgres from
+pausing, and are a real `SELECT 1` connectivity check rather than a ping — a sleeping or
+unreachable database turns the daily job red.
+
 ### Core loop
 
 Upload → Extract → Review/correct → Compose → Swap → Save

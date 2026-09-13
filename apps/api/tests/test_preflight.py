@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 
 import pytest
+from pydantic import ValidationError
 
-from app.config import Settings
+from app.config import ENV_SYNONYMS, Settings
 from app.domain.errors import ConfigurationError
 from app.preflight import (
     FATAL_IN_PRODUCTION,
@@ -221,3 +222,64 @@ def test_a_real_host_that_merely_contains_localhost_is_not_caught():
     would be naming the thing they had correctly configured.
     """
     assert verify_deployment(deployed(web_origin="https://localhost.example.com")) == []
+
+
+# --- APP_ENV accepts the spellings people write ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("written", "means"),
+    [
+        ("local", "local"),
+        ("development", "local"),
+        ("dev", "local"),
+        ("DEVELOPMENT", "local"),
+        ("  development  ", "local"),
+        ("test", "local"),
+        ("ci", "local"),
+        ("production", "production"),
+        ("prod", "production"),
+        ("Production", "production"),
+        ("staging", "production"),
+        ("stage", "production"),
+        ("", "local"),
+    ],
+)
+def test_app_env_accepts_the_conventional_spellings(written, means):
+    """Found by the obvious thing happening.
+
+    Somebody set `APP_ENV=development` — the most common spelling of this variable anywhere —
+    and the API stopped booting with a pydantic literal error naming two values. A setting
+    invented in S11 that rejects the industry-standard value for itself is the setting's bug.
+
+    `staging` maps to `production` on purpose rather than to `local`: a staging deployment has
+    the same ephemeral filesystem and the same shared signing key as a real one, and is
+    exactly where those defaults should be caught rather than tolerated.
+    """
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None, groq_api_key="not-a-real-key", app_env=written
+    )
+
+    assert settings.app_env == means
+
+
+def test_a_value_nobody_meant_is_still_refused():
+    """Silently treating `produciton` as local would switch off every production check over a
+    typo — which is the failure this whole mechanism exists to prevent.
+
+    The message names what is accepted, because a literal error listing two values when nine
+    are allowed is a message that sends somebody to read the source.
+    """
+    with pytest.raises(ValidationError) as caught:
+        Settings(  # type: ignore[call-arg]
+            _env_file=None, groq_api_key="not-a-real-key", app_env="produciton"
+        )
+
+    message = str(caught.value)
+    assert "produciton" in message
+    assert "development" in message and "production" in message
+
+
+def test_the_synonyms_only_ever_resolve_to_a_behaviour_the_application_has():
+    """The map is data, so it can acquire a value the rest of the code does not handle."""
+    assert set(ENV_SYNONYMS.values()) == {"local", "production"}

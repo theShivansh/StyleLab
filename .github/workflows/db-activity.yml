@@ -1,0 +1,101 @@
+# Daily database connectivity check.
+#
+# A Supabase project on the free tier pauses after a stretch with no database activity, and a
+# paused project means the next visitor meets a cold start or an outage. This touches it once
+# a day.
+#
+# It is a **real check**, not a keep-alive dressed as one. `GET /internal/db-activity` opens a
+# session against the configured database and executes `SELECT 1` through the same engine
+# every other request uses, so an unreachable, misconfigured, out-of-connections or sleeping
+# database turns this job red. A workflow that pinged a static route would keep the project
+# awake and tell nobody anything — which is the version worth refusing to write.
+#
+# It deliberately does not call `/health`. That endpoint is liveness-only by design: it
+# answers without touching the database so a dependency outage is reported through the error
+# envelope rather than by making the container look dead to an orchestrator that would then
+# restart it. Two questions, two endpoints.
+#
+# ## What has to be configured
+#
+#   Secret    DB_ACTIVITY_TOKEN   the same value as the API's own DB_ACTIVITY_TOKEN
+#   Variable  API_BASE_URL        the API's origin, e.g. https://<owner>-stylelab-api.hf.space
+#
+# The token lives only in GitHub Actions Secrets and in the backend's environment. It is
+# never in this file, never in the repository, and never printed — `curl` reads it from an
+# environment variable rather than taking it on a command line, where it would appear in the
+# process list and in any `set -x` output.
+#
+# ## A note on GitHub's schedule
+#
+# GitHub disables scheduled workflows in a repository with no pushes for 60 days, and emails
+# the owner when it does. If this job silently stops, that is the first thing to check — it
+# looks exactly like everything being fine.
+
+name: DB activity
+
+on:
+  schedule:
+    # 03:17 UTC. An odd minute on purpose: the top of the hour is when every cron on GitHub
+    # fires at once and scheduled jobs get queued for many minutes.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# Read-only. This job calls an external URL and touches nothing in the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: db-activity
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the database answers
+        env:
+          DB_ACTIVITY_TOKEN: ${{ secrets.DB_ACTIVITY_TOKEN }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${API_BASE_URL:-}" ]; then
+            echo "::error::API_BASE_URL is not set. Add it under Settings → Secrets and variables → Actions → Variables."
+            exit 1
+          fi
+          if [ -z "${DB_ACTIVITY_TOKEN:-}" ]; then
+            echo "::error::DB_ACTIVITY_TOKEN is not set. Add it under Settings → Secrets and variables → Actions → Secrets."
+            exit 1
+          fi
+
+          url="${API_BASE_URL%/}/internal/db-activity"
+          echo "Checking ${url}"
+
+          # Three attempts with a widening pause. Not flakiness tolerance — a Hugging Face
+          # Space sleeps when idle and takes the better part of a minute to wake, so the
+          # first request of the day is *expected* to time out. A job that went red every
+          # morning for that reason would be a job everybody learned to ignore, which is
+          # worse than not having one.
+          attempt=1
+          until [ "${attempt}" -gt 3 ]; do
+            # The header goes in on **stdin**, via `--config -`, rather than as an argument.
+            # Arguments are visible in the process list and are echoed verbatim by `set -x`,
+            # and this one is a credential. The first draft of this file interpolated it
+            # into the command line under a comment claiming it did not.
+            if body=$(printf 'header = "X-DB-Activity-Token: %s"\n' "${DB_ACTIVITY_TOKEN}" \
+                      | curl --silent --show-error --fail-with-body \
+                             --max-time 90 \
+                             --config - \
+                             "${url}"); then
+              echo "${body}"
+              echo "::notice::Database answered."
+              exit 0
+            fi
+            echo "Attempt ${attempt} did not succeed."
+            attempt=$((attempt + 1))
+            [ "${attempt}" -le 3 ] && sleep $((attempt * 30))
+          done
+
+          echo "::error::The database did not answer after 3 attempts. This is a real failure: the endpoint runs SELECT 1 against the live database, so either the API is down or the database is."
+          exit 1

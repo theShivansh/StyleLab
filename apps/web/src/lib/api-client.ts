@@ -24,6 +24,14 @@ export interface RequestOptions {
   anonymous?: boolean | undefined;
 }
 
+/** `Retry-After`, in seconds, when the API sent one. Only the rate limiter does. */
+function retryAfter(response: Response): number | undefined {
+  const header = response.headers.get("Retry-After");
+  if (!header) return undefined;
+  const seconds = Number.parseInt(header, 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
 async function parseError(response: Response): Promise<ApiError> {
   let body: unknown;
   try {
@@ -40,6 +48,7 @@ async function parseError(response: Response): Promise<ApiError> {
       retryable: parsed.data.error.retryable,
       requestId: parsed.data.error.request_id,
       status: response.status,
+      retryAfterSeconds: retryAfter(response),
     });
   }
 
@@ -48,6 +57,7 @@ async function parseError(response: Response): Promise<ApiError> {
     message: `Request failed with status ${response.status}`,
     retryable: response.status >= 500,
     status: response.status,
+    retryAfterSeconds: retryAfter(response),
   });
 }
 

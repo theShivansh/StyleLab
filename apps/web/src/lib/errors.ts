@@ -20,6 +20,12 @@ export const errorCodes = [
   "ITEM_NOT_FOUND",
   "AGENT_BUDGET_EXCEEDED",
   "TREND_SOURCE_UNAVAILABLE",
+  // Added in S12, by the review, after S11 added it to the API and not here. The file
+  // docstring says "if you add a code there, add it here" and that is exactly what did not
+  // happen: the zod schema `.catch(...)`es an unknown code to `AI_UNAVAILABLE`, so a
+  // throttled user was told the service was down. Wrong twice over — it invites a retry
+  // into a wall, and it blames us for something the user can simply wait out.
+  "RATE_LIMITED",
   "AI_UNAVAILABLE",
 ] as const;
 
@@ -46,6 +52,7 @@ export class ApiError extends Error {
     retryable: boolean;
     requestId?: string | undefined;
     status: number;
+    retryAfterSeconds?: number | undefined;
   }) {
     super(args.message);
     this.name = "ApiError";
@@ -53,12 +60,22 @@ export class ApiError extends Error {
     this.retryable = args.retryable;
     this.requestId = args.requestId;
     this.status = args.status;
+    this.retryAfterSeconds = args.retryAfterSeconds;
   }
 
   /** A gap in the user's wardrobe is a product state, not a failure to render as one. */
   get isProductState(): boolean {
     return this.code === "INSUFFICIENT_WARDROBE";
   }
+
+  /**
+   * Seconds to wait before this is worth trying again, when the API said so.
+   *
+   * Only the rate limiter sets `Retry-After` — a provider outage has no honest number to put
+   * there, and inventing one tells a client to come back at a moment nobody has any reason
+   * to expect (docs/API-SPEC.md).
+   */
+  readonly retryAfterSeconds: number | undefined;
 }
 
 /** Never surface a raw provider or stack message. docs/SECURITY-PRIVACY.md. */
@@ -72,6 +89,7 @@ const userFacingMessages: Record<ErrorCode, string> = {
   ITEM_NOT_FOUND: "That item isn't in your wardrobe.",
   AGENT_BUDGET_EXCEEDED: "Styling took longer than expected, so this look is a simpler one.",
   TREND_SOURCE_UNAVAILABLE: "Trend context is unavailable right now.",
+  RATE_LIMITED: "That's a lot at once. Give it a minute and try again.",
   AI_UNAVAILABLE: "Styling is unavailable right now. Nothing was lost — try again shortly.",
 };
 

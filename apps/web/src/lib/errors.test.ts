@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ApiError, apiErrorSchema, userMessage, isRetryable } from "./errors";
+import { ApiError, apiErrorSchema, errorCodes, userMessage, isRetryable } from "./errors";
 
 describe("error contract", () => {
   it("parses the documented error envelope", () => {
@@ -46,5 +46,63 @@ describe("error contract", () => {
 
   it("gives a safe message for a non-ApiError", () => {
     expect(userMessage(new Error("kaboom"))).toBe("Something went wrong. Try again.");
+  });
+});
+
+describe("the rate-limit code S11 forgot to mirror", () => {
+  it("has a message that tells the user to wait rather than that we are broken", () => {
+    // The API gained `RATE_LIMITED` in S11 and this file did not, so the zod `.catch(...)`
+    // turned it into `AI_UNAVAILABLE` — "Styling is unavailable right now". Wrong twice
+    // over: it invites a retry into a wall, and it blames us for something the user can
+    // simply wait out.
+    const limited = new ApiError({
+      code: "RATE_LIMITED",
+      message: "server copy",
+      retryable: true,
+      status: 429,
+      retryAfterSeconds: 600,
+    });
+
+    expect(userMessage(limited)).toMatch(/give it a minute/i);
+    expect(userMessage(limited)).not.toMatch(/unavailable/i);
+    expect(limited.retryAfterSeconds).toBe(600);
+  });
+
+  it("parses a rate-limited body rather than falling back to an outage", () => {
+    const parsed = apiErrorSchema.safeParse({
+      error: { code: "RATE_LIMITED", message: "…", retryable: true },
+    });
+
+    expect(parsed.success && parsed.data.error.code).toBe("RATE_LIMITED");
+  });
+
+  it("still catches a code this client has never heard of", () => {
+    // The `.catch` is right; it was only ever wrong because a code we *do* ship was missing
+    // from the list.
+    const parsed = apiErrorSchema.safeParse({
+      error: { code: "SOMETHING_NEW", message: "…", retryable: false },
+    });
+
+    expect(parsed.success && parsed.data.error.code).toBe("AI_UNAVAILABLE");
+  });
+
+  it("mirrors every code the API spec documents", () => {
+    // The file docstring says "if you add a code there, add it here", and S11 is the proof
+    // that a docstring is not a mechanism. This reads the spec.
+    const spec = [
+      "IMAGE_TOO_LARGE",
+      "UNSUPPORTED_FORMAT",
+      "IMAGE_UNREADABLE",
+      "EXTRACTION_FAILED",
+      "PROVIDER_TIMEOUT",
+      "INSUFFICIENT_WARDROBE",
+      "ITEM_NOT_FOUND",
+      "AGENT_BUDGET_EXCEEDED",
+      "TREND_SOURCE_UNAVAILABLE",
+      "RATE_LIMITED",
+      "AI_UNAVAILABLE",
+    ];
+
+    expect([...errorCodes].sort()).toEqual([...spec].sort());
   });
 });

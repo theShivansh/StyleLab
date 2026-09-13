@@ -20,9 +20,29 @@ dependencies = [
     "httpx>=0.27",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "pydantic>=2.9",
+    # Upper bound added in S12, by the release review, and it is not cosmetic. `crewai`
+    # declares `pydantic<2.13,>=2.11.9`. This machine had 2.13.5 — installed by an emergency
+    # repair in S8b when a collided install left pydantic and pydantic-core mismatched — and
+    # a floor of `>=2.9` let it stay. So every local test run was green against a version the
+    # agent framework says it does not support, while CI and any clean `pip install` resolved
+    # 2.12.x. Two green stacks, neither of them the other, and a container would have shipped
+    # a third.
+    #
+    # Pinned to the range crewai actually supports so that local, CI and the deployed image
+    # agree about what was tested. Revisit when crewai widens it.
+    "pydantic>=2.11.9,<2.13",
     "pydantic-settings>=2.6",
     "sqlalchemy>=2.0",
+    # The Postgres driver. Added in S12, by trying to deploy: `docs/DEPLOYMENT.md` has told
+    # operators to set `DATABASE_URL=postgresql+psycopg://…` since S11 and nothing installed
+    # anything that could open one. The container would have built for eight minutes and
+    # then failed at boot on `ModuleNotFoundError: No module named 'psycopg'` — a deployment
+    # instruction and a dependency list that had never been in the same room.
+    #
+    # `[binary]` rather than plain: it ships a wheel with libpq inside, so the image needs no
+    # Postgres development headers and the build does not depend on what the base image
+    # happens to carry.
+    "psycopg[binary]>=3.2",
     # Migrations (blocker B12, closed in S11). A runtime dependency rather than a dev one:
     # `alembic upgrade head` is a deploy step, so the image that runs the API is the image
     # that has to be able to run it.

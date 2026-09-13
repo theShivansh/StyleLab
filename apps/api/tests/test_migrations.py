@@ -192,3 +192,45 @@ def test_every_revision_can_be_walked_back():
             offenders.append(f"{revision.revision}: downgrade() does nothing")
 
     assert not offenders, "\n".join(offenders)
+
+
+def test_a_postgres_url_can_actually_be_opened():
+    """The driver `docs/DEPLOYMENT.md` tells operators to use must be installed.
+
+    Found in S12 by trying to deploy. The deployment guide has said
+    `DATABASE_URL=postgresql+psycopg://…` since S11 and nothing in `pyproject.toml` could
+    open one — the container would have built and then failed at boot on
+    `ModuleNotFoundError: No module named 'psycopg'`.
+
+    Asserted by building the engine, which resolves and imports the DBAPI module, and not by
+    connecting: this suite must not need a Postgres server. The failure mode being guarded
+    is a missing *driver*, and that is exactly what engine construction catches.
+    """
+    engine = build_engine("postgresql+psycopg://user:pw@db.example.invalid:5432/stylelab")
+    try:
+        assert engine.dialect.name == "postgresql"
+        assert engine.dialect.driver == "psycopg"
+    finally:
+        engine.dispose()
+
+
+def test_the_deployment_guide_and_the_dependency_list_name_the_same_driver():
+    """The two were out of sync for a whole phase, in a file nobody runs.
+
+    Read from both rather than restated here, so this cannot pass by agreeing with itself.
+    """
+    import re
+    import tomllib
+
+    guide = (API_ROOT.parents[1] / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
+    pyproject = tomllib.loads((API_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    drivers = set(re.findall(r"postgresql\+(\w+)://", guide))
+    assert drivers, "the deployment guide no longer shows a Postgres URL"
+
+    declared = " ".join(pyproject["project"]["dependencies"])
+    for driver in drivers:
+        assert driver in declared, (
+            f"docs/DEPLOYMENT.md tells operators to use postgresql+{driver}:// and "
+            f"pyproject.toml does not declare it"
+        )

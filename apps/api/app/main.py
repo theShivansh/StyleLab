@@ -54,6 +54,7 @@ from app.deps import FaultError
 from app.logging_setup import install_log_redaction
 from app.preflight import log_findings, verify_deployment, verify_schema
 from app.routers import assets as assets_router
+from app.routers import internal as internal_router
 from app.routers import jobs as jobs_router
 from app.routers import outfits as outfits_router
 from app.routers import session as session_router
@@ -345,6 +346,11 @@ def create_app(
     @app.get(f"{API_PREFIX}/ping")
     async def ping() -> dict[str, str]:
         return {"pong": "ok"}
+
+    # Root, not `API_PREFIX`. It is an operations endpoint alongside `/health`, not part of
+    # the product API — nothing a browser calls, nothing versioned with the wardrobe
+    # contract, and nothing a session token can reach.
+    app.include_router(internal_router.router)
 
     app.include_router(session_router.router, prefix=API_PREFIX)
     app.include_router(wardrobe_router.router, prefix=API_PREFIX)

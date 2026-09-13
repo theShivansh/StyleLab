@@ -83,6 +83,10 @@ RATE_LIMIT_IMAGES=24               # images, not requests
 RATE_LIMIT_COMPOSES=12
 RATE_LIMIT_SESSIONS=10             # per client address
 
+# Operations. Enables GET /internal/db-activity; unset means that endpoint answers 503.
+# Not a session secret and deliberately a separate variable — see "Database activity" below.
+DB_ACTIVITY_TOKEN=
+
 # Storage and identity
 STORAGE_ROOT=var/uploads
 STORAGE_BUCKET=stylelab-private
@@ -128,6 +132,33 @@ one-line fix.
 
 `alembic upgrade head --sql` prints the SQL instead of running it, for review.
 
+### The Postgres driver
+
+`psycopg[binary]` is a declared dependency as of S12. It was not before, and this file had
+been telling operators to set `postgresql+psycopg://` since S11 — an instruction and a
+dependency list that had never been in the same room. The container would have built and
+then failed at boot on `ModuleNotFoundError`. `tests/test_migrations.py` now reads the URL
+scheme out of *this file* and asserts `pyproject.toml` declares it, so the two cannot drift
+apart again.
+
+### Connecting to Supabase specifically
+
+Use the **Session pooler** string from Project Settings → Database, not the direct one:
+
+```
+postgresql+psycopg://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+```
+
+Two reasons, both of which produce confusing failures otherwise. The direct host
+(`db.<ref>.supabase.co`) resolves to IPv6 only, and plenty of container platforms have no
+IPv6 route — the symptom is a connection timeout that looks like a firewall. And the
+*transaction* pooler on port 6543 does not support the server-side prepared statements
+SQLAlchemy uses by default, which surfaces later as intermittent `prepared statement
+"__asyncpg_" already exists` style errors rather than as a clean failure at boot.
+
+Note the scheme: Supabase shows `postgresql://`, and SQLAlchemy needs `postgresql+psycopg://`
+to select the driver this project installs.
+
 **A database that predates the migrations** (created by `create_all` before S11) is not
 described by any revision — `upgrade` will fail on tables that already exist, and stamping
 it would claim a schema it does not have. Either recreate it, or apply the missing columns
@@ -143,6 +174,52 @@ It is in-process, so **a deployment that scales to zero must run the sweep as a 
 job instead** — otherwise the timer simply never fires and deletion silently stops
 happening. The sweep is idempotent and safe to run concurrently, so two replicas both
 running it costs nothing.
+
+## Database activity
+
+`GET /internal/db-activity` runs `SELECT 1` through the application's own engine and returns
+a dialect, a duration and a timestamp. `.github/workflows/db-activity.yml` calls it daily and
+on `workflow_dispatch`.
+
+It exists because a Supabase project on the free tier pauses after a stretch with no
+database activity, and a paused project means the next visitor meets a cold start or an
+outage. **It is a real connectivity check rather than a keep-alive dressed as one**: if
+Postgres is unreachable, misconfigured, out of connections or asleep, the scheduled job goes
+red. A workflow that pinged a static route would keep the project awake and tell nobody
+anything.
+
+| Where | Name | Value |
+|---|---|---|
+| API environment | `DB_ACTIVITY_TOKEN` | 32+ random characters |
+| GitHub Actions → Secrets | `DB_ACTIVITY_TOKEN` | the same value |
+| GitHub Actions → Variables | `API_BASE_URL` | the API origin, no trailing path |
+
+The same value in both places, and nowhere else — not in `.env.example`, not in this file,
+not in the workflow. The workflow passes it to `curl` on **stdin** via `--config -` rather
+than as an argument, because arguments are visible in the process list and are echoed by
+`set -x`.
+
+Behaviour:
+
+- correct token → `200` with `{"database": "ok", "dialect": …, "latency_ms": …}`
+- missing or wrong token → `401`
+- `DB_ACTIVITY_TOKEN` unset → `503`, not `200`. Unconfigured is closed, not open
+
+The response never contains the database URL, a host or a user. A Postgres URL carries a
+password, which is the same reason the boot log records only the dialect.
+
+**It deliberately does not use `/health`.** That endpoint is liveness-only by design: it
+answers without touching the database so a dependency outage is reported through the error
+envelope rather than by making the container look dead to an orchestrator that would then
+restart it. Giving it a query would turn every Postgres hiccup into a restart loop.
+
+To verify by hand:
+
+```bash
+curl -i -H "X-DB-Activity-Token: $DB_ACTIVITY_TOKEN" https://<api-host>/internal/db-activity
+```
+
+Or from GitHub: Actions → **DB activity** → Run workflow.
 
 ## Storage
 

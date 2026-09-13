@@ -51,3 +51,8 @@ var/
 # --- os ---
 .DS_Store
 Thumbs.db
+
+# Assembled by deploy/hf-space/prepare.py. A copy of apps/api plus a Dockerfile, rebuilt on
+# every run — committing it would be a second copy of the application that drifts from the
+# first one silently.
+deploy/hf-space/build/

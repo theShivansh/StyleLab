@@ -955,6 +955,127 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-13 — S12: four defects that only a deployment finds
+
+Context:
+The release review in S11 ran every gate and they were all green. S12 set out to deploy, and
+the act of deploying found four things the gates could not, because each of them is a
+disagreement between the repository and an environment the repository had never been put in.
+
+**1. The tested stack was not the shipped stack.** `crewai` declares
+`pydantic<2.13,>=2.11.9`. This machine had 2.13.5, installed by an emergency repair in S8b
+when a collided install left pydantic and pydantic-core mismatched, and the floor of
+`>=2.9` in `pyproject.toml` let it stay. So 593 local tests were green against a version the
+agent framework says it does not support, while CI — a clean `pip install` on a fresh runner
+— resolved 2.12.x. Two green stacks, neither of them the other, and a container would have
+been a third. Pinned to the range crewai supports; the suite re-run on it.
+
+**2. The setting invented in S11 rejected its own conventional value.** `APP_ENV` was a
+`Literal["local", "production"]`, and somebody set `APP_ENV=development` — the most common
+spelling of that variable anywhere. The API stopped booting with a pydantic literal error
+naming two values. Now nine spellings are accepted and normalised to the two behaviours the
+application actually has, and anything else is still refused, because silently treating
+`produciton` as local would switch off every production check over a typo.
+
+**3. The deployment guide named a driver nothing installed.** `docs/DEPLOYMENT.md` has told
+operators to set `DATABASE_URL=postgresql+psycopg://…` since S11 and `psycopg` was not a
+dependency. The image would have built for eight minutes and failed at boot on
+`ModuleNotFoundError`. A test now reads the URL scheme out of the guide and asserts
+`pyproject.toml` declares it — the two had never been in the same room.
+
+**4. The API gained an error code the web client had never heard of.** S11 added
+`RATE_LIMITED`; `apps/web/src/lib/errors.ts` says in its own docstring *"if you add a code
+there, add it here"*, and S11 did not. The zod schema `.catch(...)`es an unknown code to
+`AI_UNAVAILABLE`, so a throttled user was told the service was down — inviting a retry into
+a wall, and blaming us for something they could simply wait out. A test now reads both lists.
+
+Why this is worth an entry:
+Every one of the four is the same shape. A fact was true in one place and not checked
+against the place it had to agree with — an installed version against a declared range, a
+setting against its convention, a document against a manifest, an API against its client.
+None is subtle and none was catchable by running the tests harder, because the tests and the
+thing they disagreed with were never in the same process.
+
+The fixes are all the same shape too: a test that reads *both* sources rather than restating
+one of them. That is the only kind of test that can catch this class.
+
+---
+
+### 2026-09-13 — A real connectivity check, not a keep-alive
+
+Context:
+A Supabase project on the free tier pauses after a stretch with no database activity, and a
+paused project means the next visitor meets a cold start or an outage. The obvious fix is a
+scheduled job that pokes something.
+
+Decision:
+`GET /internal/db-activity`, token-protected, running `SELECT 1` through the application's
+own engine, called daily by `.github/workflows/db-activity.yml`.
+
+Why not the obvious version:
+A workflow that pinged a static route — or `/health`, or the landing page — would keep the
+project awake and **tell nobody anything**. It would be a green tick that means the cron
+works, dressed as a green tick that means the database works. The version built here fails
+when Postgres is unreachable, misconfigured, out of connections or asleep, which makes the
+scheduled job a monitor as well as a nudge.
+
+Specifically not `/health`: that endpoint is liveness-only by design, so a dependency outage
+is reported through the error envelope rather than by making the container look dead to an
+orchestrator that would then restart it. Giving it a query would turn every Postgres hiccup
+into a restart loop. Two questions, two endpoints.
+
+Trade-offs and the details that matter:
+- **The token is checked before the database is touched.** Without that ordering, an
+  unauthenticated flood is a way to make this API exhaust its own connection pool from
+  outside — a denial of service delivered through the endpoint added to prevent downtime.
+  Asserted as an absence: a test counts statements at the engine and requires zero after
+  three refused requests.
+- **Unconfigured is closed, not open.** An empty `DB_ACTIVITY_TOKEN` answers 503 rather than
+  matching an empty supplied token, which a naive comparison would have let through.
+- **A dedicated header**, not `Authorization: Bearer`. A session token is handed to anyone
+  who asks (blocker B15); if it also opened this, every visitor could reach it.
+- **The response carries a dialect, a duration and a timestamp** — never the URL, a host or
+  a user. A Postgres URL carries a password, which is why the boot log records only the
+  dialect.
+- The workflow passes the token to `curl` on **stdin** via `--config -`. The first draft
+  interpolated it into the command line under a comment claiming it did not; arguments are
+  visible in the process list and echoed by `set -x`.
+- Three attempts with a widening pause, because a sleeping Space takes the better part of a
+  minute to wake and a job that went red every morning for that reason is a job everybody
+  learns to ignore.
+
+---
+
+### 2026-09-13 — prompts/13 is superseded by the pivot, and S12 did not un-pivot
+
+Context:
+The final prompt describes a different product from the one that exists: "Compose →
+Visualize → Remix → Save/Shop", a catalogue to ground recommendations in, a
+`MockVirtualTryOnProvider` with pre-generated assets, and the question "can another company
+plug in its catalogue?". All of that predates the wardrobe pivot recorded on 2026-09-12,
+which closed B1, B2 and B4 by removing the catalogue, the seed imagery and VTO entirely.
+
+Decision:
+Reviewed against the product that exists, and did not rebuild the one the prompt remembers.
+The same treatment prompt 00 got in S0, for the same reason.
+
+The prompt's review questions do translate, and were asked:
+- *Is the value obvious in 10 seconds?* The hero says what it does and what it refuses to do.
+- *Does the AI really affect the product?* `tests/ai/test_ablation.py` — eleven tests, each
+  role checked against the specific contribution it exists to make.
+- *Can the system prove it rejects invalid AI output?* `python tests/ai/runner.py --response
+  FILE`. A reviewer edits a JSON file and watches the refusal.
+- *Are demo metrics labeled?* Style Match reads "a styling heuristic" on the screen.
+- *Can another company plug in its catalogue?* There is no catalogue and there will not be
+  one. The equivalent question — can another provider be plugged in — is yes, and the
+  adapter boundary is enforced by a test that parses imports with `ast`.
+
+A grep for the commerce vocabulary across `apps/` returns only the guards *against* it:
+`advisory.py` refusing a price, a prompt forbidding a brand, a type with no field for a
+merchant. The pivot was thorough.
+
+---
+
 ### 2026-09-13 — S11: the application learns which environment it is in
 
 Context:
