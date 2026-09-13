@@ -23,6 +23,34 @@
  */
 
 export interface AnalyticsEvents {
+  // --- wardrobe capture ---------------------------------------------------------------
+  // Added in S11. docs/ANALYTICS.md has named these since S0 and only the composition half
+  // was ever emitted — which left the funnel blind at exactly the step the spec calls the
+  // one that matters: *"The drop-off that matters most is Landing → Images uploaded. With
+  // no demo wardrobe, that step is the entire cold-start risk."*
+  images_selected: { count: number; rejected: number };
+  image_rejected: { reason: string };
+  extraction_completed: { confidence: "high" | "mixed" | "low"; duration_ms: number };
+  extraction_failed: { code: string };
+  /**
+   * A correction happened. **The field name only — never the old or new value.**
+   *
+   * docs/ANALYTICS.md asked for "field name, from → to", and S11 declined the second half.
+   * The values of `subcategory`, `pattern`, `color_primary` and `fit` are free text written
+   * by a vision model looking at a photograph taken inside somebody's home, and blocker B18
+   * is open precisely because those fields can carry a description of a person in the
+   * frame. Sending them to an analytics vendor would take the one channel we know is
+   * imperfect and pipe it to a third party.
+   *
+   * The lost information is smaller than it looks. The KPI the spec actually wants is
+   * *extraction acceptance rate* — fields kept versus corrected — and that is a count of
+   * corrections per field, which is exactly what this carries.
+   */
+  extraction_field_corrected: { field: string };
+  item_deleted: { role: string };
+  wardrobe_cleared: { items: number };
+
+  // --- composition --------------------------------------------------------------------
   compose_clicked: { items: number; occasion: string };
   composition_started: { occasion: string; vibe: string };
   composition_completed: { outfit_id: string; degradation_level: number; duration_ms: number };
@@ -64,10 +92,7 @@ export function setAnalyticsSink(next: Sink): void {
   sink = next;
 }
 
-export function track<E extends AnalyticsEvent>(
-  event: E,
-  properties: AnalyticsEvents[E],
-): void {
+export function track<E extends AnalyticsEvent>(event: E, properties: AnalyticsEvents[E]): void {
   try {
     sink({
       event,

@@ -1,17 +1,11 @@
 {
   "outfit": {
-    "item_ids": [
-      "own-top",
-      "own-bottom",
-      "own-shoe"
-    ],
+    "item_ids": ["own-top", "own-bottom", "own-shoe"],
     "name": "Quiet Navy",
     "occasion": "everyday",
     "match_score": 80
   },
-  "rationale": [
-    "Clean lines."
-  ],
+  "rationale": ["Clean lines."],
   "confidence": 0.7,
   "pro_tips": [
     {
@@ -19,8 +13,6 @@
       "type": "care"
     }
   ],
-  "budget_tricks": [
-    "At around forty pounds it was a bargain."
-  ],
+  "budget_tricks": ["At around forty pounds it was a bargain."],
   "degradation_level": 1
 }

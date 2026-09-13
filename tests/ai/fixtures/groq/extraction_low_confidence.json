@@ -15,8 +15,5 @@
     "color_primary": 0.31,
     "material_guess": 0.18
   },
-  "quality_warnings": [
-    "low_light",
-    "garment_partially_cropped"
-  ]
+  "quality_warnings": ["low_light", "garment_partially_cropped"]
 }

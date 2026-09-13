@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  alternativesSchema,
-  compositionGapSchema,
-  outfitSchema,
-  trendNoteSchema,
-} from "./outfit";
+import { alternativesSchema, compositionGapSchema, outfitSchema, trendNoteSchema } from "./outfit";
 
 /**
  * The outfit wire contract.

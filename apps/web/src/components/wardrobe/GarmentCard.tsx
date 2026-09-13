@@ -2,7 +2,7 @@ import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { cn } from "@/lib/cn";
 import { config } from "@/lib/config";
-import { isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
+import { describeGarment, isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
 
 /**
  * The product's core primitive: one garment the user owns, with the model's reading of it
@@ -46,11 +46,7 @@ export function GarmentCard({
   const analyzing = item.status === "analyzing";
 
   return (
-    <Card
-      raised
-      className={cn("overflow-hidden", className)}
-      aria-busy={analyzing || undefined}
-    >
+    <Card raised className={cn("overflow-hidden", className)} aria-busy={analyzing || undefined}>
       <div className="bg-surface-muted relative aspect-[4/5] w-full">
         {imageSlot ?? <GarmentImage item={item} />}
 
@@ -195,8 +191,7 @@ function GarmentImage({ item }: { item: WardrobeItem }) {
  * it cannot describe anything else: there is no field here for a room, a body or a face.
  */
 function garmentAlt(item: WardrobeItem): string {
-  const parts = [item.color_primary, item.pattern, item.subcategory ?? item.category];
-  const described = parts.filter(Boolean).join(" ");
+  const described = describeGarment(item);
   return described ? `${described}, from your wardrobe` : "A garment from your wardrobe";
 }
 

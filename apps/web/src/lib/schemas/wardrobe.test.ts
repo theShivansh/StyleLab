@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isHedged, wardrobeItemSchema } from "./wardrobe";
+import { describeGarment, isHedged, wardrobeItemSchema } from "./wardrobe";
 
 /**
  * Baseline tests for the invariants the whole product rests on. These are deliberately
@@ -62,5 +62,49 @@ describe("confidence hedging", () => {
     // They can read their own care label, which is the only source that actually knows.
     const settled = { ...item, corrected_fields: ["material_guess"] };
     expect(isHedged(settled, "material_guess", 0.7)).toBe(false);
+  });
+});
+
+describe("describing a garment in words", () => {
+  it("reads as English rather than as an identifier", () => {
+    // S11 found `white solid_color sneaker` on the result screen. `pattern`, `subcategory`,
+    // `color_primary` and `fit` are open sets in the world and cannot be closed the way
+    // `style_tags` was in S8 (blocker B18), so whatever the model writes reaches the screen.
+    // It usually writes English. Sometimes it writes an identifier, having read a great many
+    // JSON schemas.
+    expect(
+      describeGarment({
+        color_primary: "white",
+        pattern: "solid_color",
+        subcategory: "sneaker",
+      }),
+    ).toBe("white solid color sneaker");
+  });
+
+  it("falls back to the category when there is no subcategory", () => {
+    expect(
+      describeGarment({ color_primary: "navy", pattern: null, subcategory: null, category: "top" }),
+    ).toBe("navy top");
+  });
+
+  it("skips absent fields rather than leaving gaps", () => {
+    expect(describeGarment({ color_primary: null, pattern: "striped", subcategory: "shirt" })).toBe(
+      "striped shirt",
+    );
+    expect(describeGarment({})).toBe("");
+  });
+
+  it("never reaches for a field that could describe a person", () => {
+    // The guarantee is structural: the argument type has four properties and none of them
+    // is about a body. Asserted so that widening it is a decision somebody has to make on
+    // purpose rather than a parameter they add in passing.
+    const described = describeGarment({
+      color_primary: "black",
+      pattern: "solid",
+      subcategory: "jacket",
+      // @ts-expect-error — there is no field for this, and there must not be.
+      fit_on_wearer: "slim build, mid-thirties",
+    });
+    expect(described).toBe("black solid jacket");
   });
 });

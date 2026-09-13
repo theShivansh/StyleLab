@@ -28,7 +28,7 @@ Composition:
 - outfit_viewed
 - agent_stage_completed       *(role, duration, tokens)*
 - crew_degraded               *(level, reason)*
-- trend_note_shown            *(source, corpus age)*
+- trend_note_shown            *(source, days since publication)*
 - pro_tip_viewed
 - alternative_applied
 - budget_trick_viewed
@@ -74,7 +74,7 @@ KPIs:
 - composition p50 / p95 latency
 - crew degradation level distribution
 - tokens per composition
-- trend corpus age at use
+- age of the trend articles actually shown
 - advisory engagement rate
 - session completion
 
@@ -106,9 +106,33 @@ already shows on screen.
 A signed image URL is a live capability. In an analytics payload it would hand a third party
 a working link to someone's photograph, which is why the list below cannot express one.
 
-Emitting as of S7: `compose_clicked`, `composition_started`, `composition_completed`,
-`composition_failed`, `insufficient_wardrobe`, `outfit_viewed`, `swap_opened`, `item_swapped`,
-`outfit_regenerated`, `outfit_saved`, `outfit_shared`, `wardrobe_gap_shown`.
+Emitting as of S7 (composition): `compose_clicked`, `composition_started`,
+`composition_completed`, `composition_failed`, `insufficient_wardrobe`, `outfit_viewed`,
+`swap_opened`, `item_swapped`, `outfit_regenerated`, `outfit_saved`, `outfit_shared`,
+`wardrobe_gap_shown`.
+
+Added in S11 (capture): `images_selected`, `image_rejected`, `extraction_completed`,
+`extraction_failed`, `extraction_field_corrected`, `item_deleted`, `wardrobe_cleared`.
+
+S11 is late for these, and the release audit is what caught it. The funnel had been
+instrumented from `compose_clicked` onwards — which is to say from *after* the step this
+document calls the entire cold-start risk. Every KPI about upload completion was
+unmeasurable, and nothing said so.
+
+### `extraction_field_corrected` carries the field name and not the values
+
+The list above asks for "field name, from → to". S11 shipped the first half and declined the
+second.
+
+`subcategory`, `pattern`, `color_primary` and `fit` are free text written by a vision model
+looking at a photograph taken inside somebody's home, and **blocker B18 is open precisely
+because those fields can carry a description of a person in the frame.** "Data hygiene"
+below forbids inferences about the person in a photo; sending the raw corrected values would
+take the one channel we already know is imperfect and pipe it to a third party.
+
+The loss is smaller than it looks. The KPI this document actually names is *extraction
+acceptance rate* — fields kept versus corrected — and that is a count per field, which is
+exactly what the event carries. Reopen it if and when B18 closes.
 
 Deliberately not the default sink: `console.log`. A product that prints a running commentary
 of the user's session to their devtools looks like it is leaking, whatever it is doing.

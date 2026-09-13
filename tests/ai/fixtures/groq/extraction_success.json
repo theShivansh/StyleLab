@@ -7,18 +7,9 @@
   "material_guess": "cotton",
   "fit": "regular",
   "formality": "smart-casual",
-  "season_tags": [
-    "spring",
-    "autumn"
-  ],
-  "occasion_tags": [
-    "work",
-    "everyday"
-  ],
-  "style_tags": [
-    "minimal",
-    "preppy"
-  ],
+  "season_tags": ["spring", "autumn"],
+  "occasion_tags": ["work", "everyday"],
+  "style_tags": ["minimal", "preppy"],
   "field_confidence": {
     "category": 0.97,
     "subcategory": 0.84,

@@ -55,6 +55,10 @@ MAX_CANDIDATES_PER_ROLE = 8
 #: alternatives rather than one answer to take or leave.
 DEFAULT_LIMIT = 3
 
+#: Kept, unused by `advise`, and deliberately so — see the note below on why the ranker no
+#: longer writes its own disclosure into the rationale. Exported because a non-browser client
+#: reading `degradation_level` off the API has to render *something*, and one wording beats
+#: each caller inventing its own.
 DEGRADED_NOTE = (
     "Styled without the full advisory crew, so this is a shorter read than usual — "
     "the pieces are all yours and the reasoning is reduced, not the wardrobe."
@@ -137,7 +141,14 @@ class DeterministicRanker:
                 occasion=request.occasion,
                 match_score=round(look.breakdown.total * 100),
             ),
-            rationale=[*describe(look.breakdown), DEGRADED_NOTE],
+            # The disclosure is **not** a rationale line. S11 found the result screen saying
+            # it twice, in two wordings, stacked: once from here and once from the client's
+            # own `degradation_level` footer. They read as a stutter, and only one of them
+            # was right about where it belongs — a rationale line explains the *outfit*
+            # (palette, volumes, shapes), and how deeply the pipeline reasoned is a fact
+            # about the pipeline. `degradation_level` already carries it, for every rung
+            # rather than only this one.
+            rationale=list(describe(look.breakdown)),
             confidence=round(look.breakdown.total, 2),
             degradation_level=4,
         )

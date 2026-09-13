@@ -1,10 +1,6 @@
 {
   "outfit": {
-    "item_ids": [
-      "own-top",
-      "own-bottom",
-      "own-shoe"
-    ],
+    "item_ids": ["own-top", "own-bottom", "own-shoe"],
     "name": "System Notice",
     "occasion": "everyday",
     "match_score": 88

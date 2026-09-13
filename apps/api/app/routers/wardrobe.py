@@ -26,7 +26,16 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, File, Form, Request, UploadFile
 
 from app.config import get_settings
-from app.deps import NOT_FOUND, CurrentUser, FaultError, Ingest, Sessions, Signer
+from app.deps import (
+    NOT_FOUND,
+    CurrentUser,
+    FaultError,
+    Ingest,
+    Rates,
+    Sessions,
+    Signer,
+    enforce,
+)
 from app.domain.corrections import CORRECTABLE_FIELDS
 from app.domain.errors import SchemaInvalidError
 from app.domain.models import GarmentCategory, ItemStatus
@@ -34,6 +43,7 @@ from app.repositories.wardrobe import ExtractionAuditRepository, WardrobeReposit
 from app.routers.serialization import extraction_payload, item_payload
 from app.services.faults import Fault
 from app.services.ingest import UploadedFile
+from app.services.retention import RETENTION_WINDOW_S
 
 router = APIRouter(prefix="/wardrobe", tags=["wardrobe"])
 
@@ -68,6 +78,7 @@ async def upload_items(
     request: Request,
     user_id: CurrentUser,
     service: Ingest,
+    rates: Rates,
     images: Annotated[list[UploadFile], File(alias="images[]")],
     category_hints: Annotated[list[str] | None, Form(alias="category_hints[]")] = None,
 ) -> dict[str, Any]:
@@ -80,6 +91,10 @@ async def upload_items(
     Hints arrive as a parallel list because multipart has no way to attach a field to a
     file. An empty string means "let it decide", which is why the list is not filtered.
     """
+    # Charged per image, not per request. Twelve photographs in one POST is twelve vision
+    # calls on a metered key, and a per-request limit would price them as one.
+    enforce(rates.uploads, user_id, cost=max(1, len(images)))
+
     hints = category_hints or []
     files = [
         UploadedFile(
@@ -231,13 +246,17 @@ async def correct_item(
 
 @router.post("/items/{item_id}/reanalyze", status_code=202)
 async def reanalyze_item(
-    item_id: str, user_id: CurrentUser, service: Ingest
+    item_id: str, user_id: CurrentUser, service: Ingest, rates: Rates
 ) -> dict[str, Any]:
     """Re-run extraction. Corrected fields are preserved, not recomputed.
 
     202 and a job: this is the per-image retry the upload queue offers, and it must not
     block any more than the first analysis did.
     """
+    # One image, one provider call — the same currency as an upload, drawn from the same
+    # bucket. A retry loop that bypassed the limit would be the cheapest way to drain it.
+    enforce(rates.uploads, user_id)
+
     job_id, _ = await service.reanalyze(user_id, item_id)
     if job_id is None:
         raise FaultError(NOT_FOUND)
@@ -266,6 +285,39 @@ async def delete_item(
     if not result.deleted:
         raise FaultError(NOT_FOUND)
     return {"deleted": True, "affected_outfits": result.affected_outfits}
+
+
+@router.delete("/items")
+async def delete_wardrobe(user_id: CurrentUser, sessions: Sessions) -> dict[str, Any]:
+    """Remove the whole wardrobe in one action.
+
+    docs/SECURITY-PRIVACY.md: *"A user must be able to remove their entire wardrobe in one
+    action."* Until S11 the only deletion was per item, so exercising that right meant one
+    request per photograph and trusting that none was missed.
+
+    Deliberately takes no confirmation token and no `?confirm=true`. A confirmation belongs
+    in the interface, where the person is, not in the protocol — a flag here would be
+    satisfied by any client that set it and would give the endpoint the *appearance* of a
+    safeguard. The web client asks; this route does as it is told.
+
+    Soft, like the single delete, and on the same thirty-day clock
+    (`app/services/retention.py`). Counts come back rather than ids: a list of the hundred
+    things the user just destroyed answers nothing they asked.
+    """
+    with sessions() as session:
+        result = WardrobeRepository(session).delete_all(user_id)
+        session.commit()
+
+    return {
+        "deleted": True,
+        "items": result.items,
+        "assets": result.assets,
+        "affected_outfits": result.outfits,
+        # What the user is actually promised. Said here as well as in the interface, because
+        # this is the response a developer reads when they integrate, and a retention window
+        # nobody mentions is a retention window nobody honours.
+        "images_erased_after_days": RETENTION_WINDOW_S // 86400,
+    }
 
 
 @router.get("/items/{item_id}/extractions")

@@ -955,6 +955,246 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-13 — S11: the application learns which environment it is in
+
+Context:
+Every default in `app/config.py` was chosen so a fresh clone runs, and each was right on its
+own. `SESSION_SECRET` unset generates a per-process key. `DATABASE_URL` unset resolves to a
+SQLite file in the working directory. `WEB_ORIGIN` defaults to `http://localhost:3000`. All
+three are correct on a laptop, all three are broken in a container, and the application had
+no way to tell the difference.
+
+The failure mode is the expensive kind, because none of it looks like a crash: a deploy
+silently logs every visitor out, or deletes every wardrobe, or fails CORS preflight in a way
+that reads from outside exactly like the API being down.
+
+Decision:
+`APP_ENV`, defaulting to `local`. `app/preflight.py` checks the accommodations and, under
+`production`, refuses to boot on the ones that make the application *incorrect* rather than
+merely worse — reporting all of them in one message.
+
+Locally it warns about exactly two: `SESSION_SECRET` and `EXA_API_KEY`, the two whose absence
+changes what the application does right now. It says nothing about `WEB_ORIGIN`, which is
+*correct* locally — a warning that fires when nothing is wrong is how a developer learns to
+skim past preflight, including on the day it says something new.
+
+Alternatives:
+A `strict_config` flag defaulting to on. Rejected for the reason S6 rejected
+`verify_models_at_boot`: a flag whose only purpose is to switch off a safety check is a flag
+that eventually ships off. Deriving the environment from `DATABASE_URL` looking like
+Postgres. Rejected — it makes the check's own trigger a thing somebody can get wrong, and a
+staging environment on SQLite would be silently exempt.
+
+Trade-offs:
+One more environment variable in a deploy config, which is the one place somebody is already
+setting environment variables. And a default of `local` means a misconfigured production
+deployment that *forgot* `APP_ENV` gets no protection at all — accepted, because the reverse
+default breaks every fresh clone on three settings nobody has heard of yet.
+
+Follow-up:
+`SESSION_SECRET` has a 32-character floor. A short secret is worse than an absent one:
+absent is loud and generates 256 random bits, while `SESSION_SECRET=stylelab` is silent and
+forges every session token and image capability in the system.
+
+---
+
+### 2026-09-13 — Rate limiting, because there is no authentication
+
+Context:
+`docs/SECURITY-PRIVACY.md` has asked for "rate limiting on upload and extraction
+specifically" since S0 and nothing implemented it. What makes it urgent rather than tidy is
+what sits beside it: there is no authentication (blocker B15). `POST /session` mints a token
+for anyone who asks, and that token reaches `POST /wardrobe/items`, which calls a metered
+vision model once per photograph.
+
+So the exposure is not "someone floods the API". It is **someone drains the provider
+budget**, without a credential, from a URL that is public by design. Every other protection
+in this codebase is about one user reading another user's wardrobe; this is the first one
+about the deployment surviving the afternoon.
+
+Decision:
+Token buckets (`app/services/ratelimit.py`) on the three operations that cost money: uploads
+charged **per image**, compositions, and new sessions charged per client address.
+
+Per image is the whole reason it is a bucket and not a counter. One POST carrying twelve
+photographs is twelve provider calls, and a per-request limit would price them as one —
+making the cheapest way to drain the key the same thing the documented primary flow does.
+
+Alternatives:
+A fixed window, which is easier and has a hole at the boundary: a client gets its whole
+allowance at 11:59:59 and the whole of the next at 12:00:00, twice the intended burst at the
+worst moment. Redis, which is correct and is a service this project does not have — the
+interface takes a key and a cost, so it replaces the storage without touching a caller.
+
+Trade-offs:
+In-process, so the limit is **per instance** and two replicas allow twice as much. Recorded
+in docs/DEPLOYMENT.md rather than hidden, because a limiter that is quietly per-instance is
+one somebody will later size a deployment against.
+
+Reads and corrections are deliberately unlimited. A limit there produces a product that
+refuses to show somebody their own clothes, defending against an attacker who could have
+requested the landing page just as cheaply.
+
+Follow-up:
+The session bucket keys on `request.client.host` and the API deliberately does not read
+`X-Forwarded-For`. An unvalidated one is a limiter an attacker switches off by setting a
+header — worse than none, because it looks like protection. Behind a proxy, uvicorn's
+`--proxy-headers --forwarded-allow-ips` already knows which hops to trust, and this module
+should not acquire a second opinion.
+
+---
+
+### 2026-09-13 — Deletion becomes true on disk (B16), and the copy that promised it changes
+
+Context:
+`deleted_at` stopped a photograph being served and left the bytes exactly where they were,
+with nothing scheduled to remove them. The soft delete was a deliberate trade —
+docs/DATA-MODEL.md wants deletion observable and reversible by support — and it was only
+ever half a trade. "Delete my photographs" was a statement about a database column.
+
+Meanwhile the landing page said **"Delete means delete"**, and underneath it, *"Remove one
+garment or the whole wardrobe. We tell you which looks that breaks before you confirm."*
+Three claims, and at the S11 audit none of them was quite true: deletion was soft, there was
+no way to remove a whole wardrobe, and the affected looks were named *after* the removal.
+
+Decision:
+Build the missing half and rewrite the claim to match.
+
+`app/services/retention.py` sweeps hourly and at boot, unlinking any asset whose thirty-day
+window has closed and recording it in `assets.purged_at`. `DELETE /wardrobe/items` removes
+the whole wardrobe in one request, with a two-tap confirmation in the interface that states
+what deletion actually means. The privacy card now reads *"Delete removes it, then erases
+it"* and names the thirty days.
+
+Why the window is stated in three places — the landing copy, the confirmation, and the API
+response — is that a retention period the product does not state is one the user has not
+agreed to.
+
+Alternatives:
+Purging opportunistically when someone deletes something. Less code, and it answers the
+wrong question: a user who deletes their wardrobe and never returns is exactly the user
+whose photographs must go, and they are the one who never triggers it.
+
+Making the affected looks a pre-check instead. Rejected as the wrong fix for the right
+observation — the post-hoc message is fine *because* there is a window in which to change
+your mind, and the copy was the thing that was wrong.
+
+Trade-offs:
+The sweep is in-process, like the job runner (B14). A deployment that scales to zero must run
+it as a scheduled job, or deletion silently stops happening — said in docs/DEPLOYMENT.md.
+
+Follow-up:
+The sweep enumerates owners and asks the ownership-scoped repository once per owner, rather
+than issuing the one obvious query. `select(AssetRow)` over every user is precisely the
+unscoped read path `tests/test_query_scoping.py` exists to prevent, and a maintenance job is
+exactly the "admin or debug" exception prompts/04 refuses to allow. Reading the set of
+*owners* is not reading owned data. The extra queries are the price of the invariant.
+
+---
+
+### 2026-09-13 — Migrations (B12), and the failure that made them concrete
+
+Context:
+The schema existed wherever somebody had run `Base.metadata.create_all` — fine for tests and
+a laptop, and it means a deployed database can never receive a change. B12 has been open
+since S4 as an abstraction.
+
+S11 made it concrete by accident. Adding `assets.purged_at` for the retention sweep, the
+local database — created by `create_all` months of sessions ago — kept working until a query
+touched the column, at which point **every upload failed** and the user-facing message was
+*"Something went wrong on our side."* The correct message for an unclassified error, and a
+useless one for a problem with a one-line fix.
+
+`create_all` creates missing **tables**. It has never created a missing **column**, and
+nothing in the application knew the difference.
+
+Decision:
+Alembic, with `alembic upgrade head` as a deploy step and `create_all` reserved for local and
+test. Plus `preflight.verify_schema`, which compares the live database to the models at boot
+using Alembic's own comparison and refuses to serve if they differ.
+
+`verify_schema` is fatal in *every* environment, which is stricter than the rest of preflight.
+The justification is that there is no degraded mode: a schema the queries do not match means
+every request fails anyway, so the only question is whether the operator learns it from a
+boot message naming the fix or from a stream of 500s that does not.
+
+Alternatives:
+Replaying the eight phases of schema history as revisions. Archaeology for an audience of
+nobody — no deployed database exists whose history it would need to match. The initial
+revision is a baseline.
+
+Trade-offs:
+A database created by `create_all` before this exists is not upgradeable by it, and stamping
+it would claim a schema it does not have. Documented in docs/DEPLOYMENT.md with both fixes.
+
+Follow-up:
+`tests/test_migrations.py` asserts a migrated database and a `create_all` database are
+indistinguishable — the same comparison `--autogenerate` makes, run as a test. That is the
+part that keeps B12 closed, because the real failure mode is not "nobody wrote a migration",
+it is somebody adding a column, watching every test pass, and shipping.
+
+It also found a bug on the day it was written. Alembic's generated `env.py` calls
+`logging.config.fileConfig` with its default, `disable_existing_loggers=True`, which disables
+every logger not named in `alembic.ini` — every `stylelab.*` logger there is. It surfaced as
+two unrelated logging tests going red, which is the lucky way to find it. The unlucky way is
+a deployment that runs a migration in-process before serving and then never logs again.
+
+---
+
+### 2026-09-13 — A timeout is not a breach
+
+Context:
+The latency circuit breaker trips after exceeding p95 twice in a row, and "consecutive" was
+carefully chosen: one slow compose is a slow compose, and a breaker that trips on a single
+one makes the product visibly shallower for no reason a user can see.
+
+Composing in a browser during the S11 audit showed what that rule does when the advisor does
+not merely run late but is **cancelled**. The full crew exceeded 15s, the composition fell to
+the deterministic ranker (rung 4), and the breaker recorded one breach. So the next compose
+would spend the whole budget again and fall to the ranker again before the reduced crew
+(rung 3) was ever reached — thirty seconds of a user's time to arrive at a rung the first
+timeout was already sufficient evidence for.
+
+Decision:
+`LatencyCircuit.trip()`. A timeout opens the breaker on its own; ordinary slowness still
+needs two in a row.
+
+Why:
+They are different events. A breach is a measurement — the advisor answered, and took too
+long. A timeout is a failure to answer at all: the call was cancelled at the budget and the
+whole of it bought nothing. Treating the stronger evidence as if it were the weaker made the
+middle rung of the ladder unreachable in exactly the conditions it exists for.
+
+Trade-offs:
+None found. Recovery is unchanged — one run inside budget closes the breaker whichever way
+it opened — so a single provider hiccup still costs one reduced composition rather than a
+timer somebody guessed at.
+
+---
+
+### 2026-09-13 — No LangSmith or Arize, still; and no hosted object store
+
+Context:
+S8b recorded the reasoning for not wiring a vendor tracing backend: what exists instead is
+the data such a backend consumes — structured events, computed rollups, one sink interface —
+and shipping unverified integration config against a service this project has no account
+with would be the same move as a stubbed ablation test.
+
+S11 is the deploy phase, so the question came back, and with it a second one: `ObjectStore`
+has had a `SupabaseObjectStore` named in its docstring as "S11" since S4.
+
+Decision:
+Neither. The reasoning is the same one and it has not weakened: an integration nobody can
+run is not an integration, and calling the product "observable" or "hosted" on the strength
+of config that has never executed is the claim this project exists not to make.
+
+Trade-offs:
+A deployment must mount a volume for `STORAGE_ROOT` or lose every photograph on the next
+deploy. Preflight warns rather than refusing — refusing would mean no deployment could start
+at all — and blocker **B20** carries it as an open item rather than a solved one.
+
+---
+
 ### 2026-09-12 — Groq SDK over the OpenAI-compatible endpoint
 
 Context:

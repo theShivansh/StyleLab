@@ -38,8 +38,8 @@ export function StyleMatch({
       </div>
 
       <p className="text-ink-muted mt-2 text-xs">
-        How well these pieces work together for the occasion you picked. Not a measurement of
-        fit, and not a judgement of you.
+        How well these pieces work together for the occasion you picked. Not a measurement of fit,
+        and not a judgement of you.
       </p>
 
       {rationale.length > 0 && (

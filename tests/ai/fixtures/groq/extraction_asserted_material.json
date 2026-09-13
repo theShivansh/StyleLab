@@ -7,15 +7,9 @@
   "material_guess": "100% merino wool",
   "fit": "regular",
   "formality": "smart-casual",
-  "season_tags": [
-    "winter"
-  ],
-  "occasion_tags": [
-    "everyday"
-  ],
-  "style_tags": [
-    "minimal"
-  ],
+  "season_tags": ["winter"],
+  "occasion_tags": ["everyday"],
+  "style_tags": ["minimal"],
   "field_confidence": {
     "category": 0.98,
     "subcategory": 0.94,

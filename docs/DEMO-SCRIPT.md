@@ -14,7 +14,18 @@ run on real clothes.
 - **Verify the live path that morning.** There is no demo mode: a real `GROQ_API_KEY`
   must be set, both vision models must pass the boot availability check, and Groq must be
   up. Do one full rehearsal run end to end — not a mock.
-- Check the trend corpus is within `TREND_MAX_AGE_DAYS`, or the Trend Scout is skipped.
+- Set `EXA_API_KEY`, or the Trend Scout is skipped and every look discloses degradation 2.
+  (Nothing breaks without it — the outfits are identical. It is one line of small print on
+  the result screen that an interviewer may well ask about, which is either a good moment
+  or an awkward one depending on whether you meant it.)
+- **Set `SESSION_SECRET`.** Without it the API signs with a per-process key, so restarting
+  the server mid-demo makes the wardrobe on screen go blank for no visible reason. Found
+  the hard way in S6.
+- **Pace the uploads and pause before composing.** Measured in S11 on this account's tier:
+  three extractions followed immediately by a compose puts the crew over its 15s budget, and
+  the look comes back styled by the deterministic ranker with the depth disclosed. The
+  product is behaving correctly and it is not the version you want to show. Roughly a
+  minute between the last upload and the compose is enough (blocker B17).
 
 ## 30-second pitch
 

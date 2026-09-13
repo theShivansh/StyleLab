@@ -64,14 +64,32 @@ async def test_rung_one_runs_every_role():
 
     await subject.advise(request_for(with_trends=True))
 
-    assert subject.last_run.roles_run == (
+    roles = subject.last_run.roles_run
+
+    # Membership as a set, order only where the design actually promises one. The crew runs
+    # in phases with two **concurrent pairs** in it, so which of `style_profiler` and
+    # `trend_scout` finishes first is genuinely undefined — and so is the Critic against the
+    # Practical Advisor. This assertion was a tuple, and it passed for as long as the
+    # scheduler happened to be consistent; S11 caught it failing on an otherwise unrelated
+    # run. A test that fails occasionally to enforce something the design deliberately does
+    # not promise is worse than no test, because the first response to it is a re-run.
+    #
+    # S8b fixed exactly this shape in `tests/live/test_crew_pipeline.py` for the second pair
+    # and did not look for the first one.
+    assert set(roles) == {
         "style_profiler",
         "trend_scout",
         "outfit_architect",
         "critic",
         "practical_advisor",
         "editor",
-    )
+    }
+    # What the phases *do* promise: the pairs come before and after the architect, and the
+    # editor is last because it merges everything.
+    assert set(roles[:2]) == {"style_profiler", "trend_scout"}
+    assert roles[2] == "outfit_architect"
+    assert set(roles[3:5]) == {"critic", "practical_advisor"}
+    assert roles[-1] == "editor"
 
 
 async def test_rung_two_is_the_crew_without_a_trend_supply():

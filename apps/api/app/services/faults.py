@@ -53,6 +53,10 @@ class Fault:
     message: str
     retryable: bool
     status: int = 500
+    #: Rendered as a `Retry-After` header when present. Only the rate limiter sets it: a
+    #: provider outage has no honest number to put here, and inventing one would tell a
+    #: client to come back at a moment nobody has any reason to expect.
+    retry_after_s: int | None = None
 
 
 #: Kept beside the mapping so a new provider error cannot quietly pick up a default that

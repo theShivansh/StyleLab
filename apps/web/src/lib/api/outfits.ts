@@ -49,11 +49,7 @@ export function getOutfit(outfitId: string, signal?: AbortSignal) {
  * An empty list is a valid answer and arrives with a named gap rather than an error — a
  * wardrobe with one pair of shoes is small, not broken (USER-FLOWS Flow 3).
  */
-export function getAlternatives(
-  outfitId: string,
-  role: GarmentCategory,
-  signal?: AbortSignal,
-) {
+export function getAlternatives(outfitId: string, role: GarmentCategory, signal?: AbortSignal) {
   return apiClient.get(
     `/outfits/${encodeURIComponent(outfitId)}/alternatives?role=${encodeURIComponent(role)}`,
     alternativesSchema,

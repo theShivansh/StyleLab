@@ -59,10 +59,12 @@ describe("upload queue", () => {
   });
 
   it("keeps a rejected entry visible so the user sees the reason", () => {
-    useWardrobe.getState().enqueue([
-      upload({ localId: "ok", state: "ready" }),
-      upload({ localId: "bad", state: "rejected", error: "Too large" }),
-    ]);
+    useWardrobe
+      .getState()
+      .enqueue([
+        upload({ localId: "ok", state: "ready" }),
+        upload({ localId: "bad", state: "rejected", error: "Too large" }),
+      ]);
 
     useWardrobe.getState().clearResolvedUploads();
 

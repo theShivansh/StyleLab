@@ -1,17 +1,11 @@
 {
   "outfit": {
-    "item_ids": [
-      "own-top",
-      "own-bottom",
-      "u2-jacket"
-    ],
+    "item_ids": ["own-top", "own-bottom", "u2-jacket"],
     "name": "Layered Minimal",
     "occasion": "everyday",
     "match_score": 97
   },
-  "rationale": [
-    "The jacket pulls the whole look together."
-  ],
+  "rationale": ["The jacket pulls the whole look together."],
   "confidence": 0.98,
   "degradation_level": 1
 }

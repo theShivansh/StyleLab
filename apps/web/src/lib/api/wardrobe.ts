@@ -41,19 +41,15 @@ export function getJob(jobId: string, signal?: AbortSignal) {
 }
 
 export function getWardrobeItem(itemId: string, signal?: AbortSignal) {
-  return apiClient.get(
-    `/wardrobe/items/${encodeURIComponent(itemId)}`,
-    wardrobeItemSchema,
-    { signal },
-  );
+  return apiClient.get(`/wardrobe/items/${encodeURIComponent(itemId)}`, wardrobeItemSchema, {
+    signal,
+  });
 }
 
 export function listWardrobeItems(signal?: AbortSignal) {
-  return apiClient.get(
-    "/wardrobe/items",
-    z.object({ items: z.array(wardrobeItemSchema) }),
-    { signal },
-  );
+  return apiClient.get("/wardrobe/items", z.object({ items: z.array(wardrobeItemSchema) }), {
+    signal,
+  });
 }
 
 /** A correction. Every field named here becomes protected from later re-analysis. */
@@ -88,6 +84,29 @@ export function reanalyzeWardrobeItem(itemId: string) {
  * `affected_outfits` is why this returns a body. A garment can be in a saved look, and
  * deleting it without saying so leaves the user to find the hole themselves.
  */
+/**
+ * Remove every garment in one request.
+ *
+ * docs/SECURITY-PRIVACY.md: *"A user must be able to remove their entire wardrobe in one
+ * action."* Built in S11 — until then the right existed only as a sentence in a spec and a
+ * claim on the landing page.
+ *
+ * `images_erased_after_days` comes back because the deletion is soft, and a response that
+ * said only `deleted: true` would invite the reading that the photographs are already gone.
+ */
+export function deleteWardrobe() {
+  return apiClient.delete(
+    "/wardrobe/items",
+    z.object({
+      deleted: z.boolean(),
+      items: z.number(),
+      assets: z.number(),
+      affected_outfits: z.number(),
+      images_erased_after_days: z.number(),
+    }),
+  );
+}
+
 export function deleteWardrobeItem(itemId: string) {
   return apiClient.delete(
     `/wardrobe/items/${encodeURIComponent(itemId)}`,

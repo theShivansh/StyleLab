@@ -165,7 +165,9 @@ test("@critical content is visible even when IntersectionObserver never fires", 
 
   const hidden = await page
     .locator("[data-revealed]")
-    .evaluateAll((nodes) => nodes.filter((node) => node.getAttribute("data-revealed") !== "true").length);
+    .evaluateAll(
+      (nodes) => nodes.filter((node) => node.getAttribute("data-revealed") !== "true").length,
+    );
   expect(hidden).toBe(0);
 
   await expect(page.getByRole("heading", { name: "Start with six photos." })).toBeVisible();

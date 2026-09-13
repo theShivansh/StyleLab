@@ -19,8 +19,14 @@ const PROMISES = [
     body: "Photos taken indoors carry GPS. It is removed on ingest, along with the rest of the EXIF.",
   },
   {
-    title: "Delete means delete",
-    body: "Remove one garment or the whole wardrobe. We tell you which looks that breaks before you confirm.",
+    // Rewritten in S11, because both halves of the old copy were slightly untrue and the
+    // old headline — "Delete means delete" — was the kind of claim this product exists not
+    // to make. Deletion is soft: the garment leaves your wardrobe at once and the file is
+    // erased when the thirty-day window closes (`app/services/retention.py`). And the
+    // affected looks are named *after* the removal, not before it, which is fine precisely
+    // because there is a window in which to change your mind.
+    title: "Delete removes it, then erases it",
+    body: "Remove one garment or the whole wardrobe. It disappears from your closet immediately, we name any saved look it broke, and the photo itself is erased within 30 days.",
   },
   {
     title: "Nothing is inferred about you",
@@ -38,8 +44,8 @@ export function PrivacyAndCta() {
             Photographs of your home, treated like it.
           </h2>
           <p className="text-lede text-ink-muted mt-6 max-w-[52ch]">
-            Cataloguing a closet means uploading a lot of pictures taken inside your house.
-            That is personal data with things in the background you did not mean to share.
+            Cataloguing a closet means uploading a lot of pictures taken inside your house. That is
+            personal data with things in the background you did not mean to share.
           </p>
         </Reveal>
 
@@ -56,9 +62,9 @@ export function PrivacyAndCta() {
 
         <Reveal delayMs={260}>
           <p className="text-ink-muted mt-8 max-w-[62ch] text-sm leading-relaxed">
-            One thing stated plainly: styling runs on a hosted model provider, so each garment
-            photo you upload is sent there to be read. There is no offline mode. If that is not
-            a trade you want to make, this is not the product for you.
+            One thing stated plainly: styling runs on a hosted model provider, so each garment photo
+            you upload is sent there to be read. There is no offline mode. If that is not a trade
+            you want to make, this is not the product for you.
           </p>
         </Reveal>
       </section>
@@ -76,7 +82,6 @@ export function PrivacyAndCta() {
                 Start my wardrobe
               </ButtonLink>
             </div>
-
           </Reveal>
         </div>
       </section>

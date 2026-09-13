@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { track } from "./analytics";
 import { getJob, getWardrobeItem } from "./api/wardrobe";
+import { config } from "./config";
 import { userMessage } from "./errors";
+import type { WardrobeItem } from "./schemas/wardrobe";
 import { useWardrobe } from "./wardrobe-store";
 
 const POLL_INTERVAL_MS = 1200;
@@ -57,6 +60,7 @@ export function useAnalysisPolling() {
 
       const controller = new AbortController();
       controllers.current.set(jobId, controller);
+      const startedAt = Date.now();
 
       void (async () => {
         try {
@@ -77,16 +81,27 @@ export function useAnalysisPolling() {
                   "We couldn't read that photo. Retake it, or add the details by hand.",
                 retryable: job.error?.retryable ?? true,
               });
+              track("extraction_failed", { code: job.error?.code ?? "unknown" });
               return;
             }
 
             if (job.status === "completed") {
               if (!itemId) {
-                updateUpload(upload.localId, { state: "failed", error: "That photo went missing." });
+                updateUpload(upload.localId, {
+                  state: "failed",
+                  error: "That photo went missing.",
+                });
                 return;
               }
               const item = await getWardrobeItem(itemId, controller.signal);
               upsertItem(item);
+              // docs/ANALYTICS.md wants a confidence *bucket*, not the scores: the KPI is
+              // "how often does the model come back unsure", and a histogram of raw floats
+              // per field would be a description of one person's wardrobe.
+              track("extraction_completed", {
+                confidence: confidenceBucket(item),
+                duration_ms: Date.now() - startedAt,
+              });
               updateUpload(upload.localId, { state: "ready", stage: job.stage });
               return;
             }
@@ -113,4 +128,21 @@ export function useAnalysisPolling() {
       })();
     }
   }, [uploads, updateUpload, upsertItem]);
+}
+
+/**
+ * A confidence bucket, not the scores.
+ *
+ * docs/ANALYTICS.md asks for "confidence bucket" and the distinction is the data-hygiene
+ * rule: the per-field floats describe one person's specific garments, and a histogram of
+ * them at a vendor is a description of somebody's wardrobe. How often the model comes back
+ * unsure is the question worth answering, and it needs three words rather than eleven
+ * numbers.
+ */
+function confidenceBucket(item: WardrobeItem): "high" | "mixed" | "low" {
+  const scores = Object.values(item.field_confidence);
+  if (scores.length === 0) return "low";
+  const below = scores.filter((score) => score < config.confidenceFloor).length;
+  if (below === 0) return "high";
+  return below >= scores.length / 2 ? "low" : "mixed";
 }

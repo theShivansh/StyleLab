@@ -128,7 +128,24 @@ def api(stubs, tmp_path):
                 user_id=body["user_id"], headers={"Authorization": f"Bearer {body['token']}"}
             )
 
+        def set_quota(which: str, amount: float, *, seconds: float = 3600) -> None:
+            """Shrink one rate limit for the duration of a test.
+
+            Reaching into `app.state` rather than rebuilding the app with different
+            settings: the production quotas are sized for a real session (24 images, 12
+            compositions) and a test that spent them honestly would upload two dozen
+            photographs to assert one refusal.
+            """
+            from app.services.ratelimit import Quota, RateLimiter
+
+            setattr(
+                app.state.limits,
+                which,
+                RateLimiter(Quota.per_window(amount, seconds=seconds)),
+            )
+
         test_client.start_session = start_session  # type: ignore[attr-defined]
+        test_client.set_quota = set_quota  # type: ignore[attr-defined]
         test_client.transport_double = app.state.transport  # type: ignore[attr-defined]
         yield test_client
 

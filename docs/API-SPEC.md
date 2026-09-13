@@ -352,6 +352,28 @@ handler remembering to check.
 There is no unsave in this phase. Nothing in the product removes a look yet, and an endpoint
 with no caller is an endpoint nobody tested.
 
+## DELETE /wardrobe/items
+
+Remove the whole wardrobe in one action. docs/SECURITY-PRIVACY.md requires it; S11 built it.
+
+```json
+{ "deleted": true, "items": 6, "assets": 6, "affected_outfits": 2,
+  "images_erased_after_days": 30 }
+```
+
+Counts, not ids: the caller is a user deleting everything, and a list of the hundred things
+they just destroyed answers nothing they asked.
+
+Soft, like the single delete, and on the same clock — which is why the response says so.
+`{"deleted": true}` alone would invite the reading that the photographs are already gone.
+
+Takes no confirmation token and no `?confirm=true`. A confirmation belongs in the interface,
+where the person is; a flag here would be satisfied by any client that set it and would give
+the endpoint the *appearance* of a safeguard.
+
+Affected outfits become `incomplete` rather than being deleted, the same as a single
+deletion. An outfit row is the record that the user composed something — not a garment.
+
 ## GET /wardrobe/items/{item_id}/extractions
 
 The audit trail — what each model returned, what was rejected and why. Powers the
@@ -401,7 +423,17 @@ Access logs must not record the token. Enforced at the logging layer
 
 Codes: `IMAGE_TOO_LARGE` · `UNSUPPORTED_FORMAT` · `IMAGE_UNREADABLE` ·
 `EXTRACTION_FAILED` · `PROVIDER_TIMEOUT` · `INSUFFICIENT_WARDROBE` · `ITEM_NOT_FOUND` ·
-`AGENT_BUDGET_EXCEEDED` · `TREND_SOURCE_UNAVAILABLE` · `AI_UNAVAILABLE`
+`AGENT_BUDGET_EXCEEDED` · `TREND_SOURCE_UNAVAILABLE` · `RATE_LIMITED` · `AI_UNAVAILABLE`
+
+`RATE_LIMITED` (429, S11) carries a `Retry-After` header and is the only fault that sets
+one — a provider outage has no honest number to put there, and inventing one tells a client
+to come back at a moment nobody has any reason to expect. One message for all three quotas:
+which one was hit describes the shape of our provider spend, and a user only needs to know
+to wait.
+
+`request_id` is now always present (S11). Every response carries the same value in
+`X-Request-ID`, and a caller-supplied `X-Request-ID` is kept when it is safe to echo, so a
+trace started at the web tier survives the hop.
 
 `AI_UNAVAILABLE` is a real outage, not a downgrade path. There is no demo mode to fall
 back to, so say so plainly rather than serving a fabricated result.

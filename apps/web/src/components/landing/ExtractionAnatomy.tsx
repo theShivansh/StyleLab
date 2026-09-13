@@ -26,7 +26,12 @@ const hedgedItem = wardrobeItemSchema.parse({
   material_guess: "cotton",
   fit: "regular",
   formality: "smart-casual",
-  field_confidence: { category: 0.97, subcategory: 0.88, color_primary: 0.52, material_guess: 0.41 },
+  field_confidence: {
+    category: 0.97,
+    subcategory: 0.88,
+    color_primary: 0.52,
+    material_guess: 0.41,
+  },
   corrected_fields: [],
   quality_warnings: ["low_light"],
   image_url: "",
@@ -49,9 +54,9 @@ export function ExtractionAnatomy() {
           A guess is shown as a guess.
         </h2>
         <p className="text-lede text-ink-muted mt-6 max-w-[52ch]">
-          Vision models are confidently wrong about colour under bad light. So confidence is
-          part of the interface, not hidden behind it — and correcting the model is a normal
-          thing to do rather than an apology for it.
+          Vision models are confidently wrong about colour under bad light. So confidence is part of
+          the interface, not hidden behind it — and correcting the model is a normal thing to do
+          rather than an apology for it.
         </p>
       </Reveal>
 
@@ -75,11 +80,13 @@ export function ExtractionAnatomy() {
                 Nothing here claims to know fibre content from a photograph.
               </li>
               <li>
-                <strong className="text-ink font-medium">Your correction is final.</strong> Re-running
-                the analysis never overwrites a field you have set.
+                <strong className="text-ink font-medium">Your correction is final.</strong>{" "}
+                Re-running the analysis never overwrites a field you have set.
               </li>
               <li>
-                <strong className="text-ink font-medium">Every outfit traces to an item you own.</strong>{" "}
+                <strong className="text-ink font-medium">
+                  Every outfit traces to an item you own.
+                </strong>{" "}
                 The model cannot introduce a garment that is not in your closet.
               </li>
             </ul>

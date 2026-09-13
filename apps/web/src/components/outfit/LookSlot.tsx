@@ -4,7 +4,7 @@ import { Chip } from "@/components/ui/Chip";
 import { cn } from "@/lib/cn";
 import { config } from "@/lib/config";
 import type { OutfitSlot } from "@/lib/schemas/outfit";
-import { isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
+import { describeGarment, isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
 
 /**
  * One role in the look, and whatever is filling it.
@@ -51,9 +51,7 @@ export function LookSlot({
           <SlotImage item={item} />
         ) : (
           <div className="text-ink-muted grid h-full w-full place-items-center px-6 text-center">
-            <p className="text-sm">
-              The {slot.role} you had here was removed from your wardrobe.
-            </p>
+            <p className="text-sm">The {slot.role} you had here was removed from your wardrobe.</p>
           </div>
         )}
       </div>
@@ -93,10 +91,15 @@ export function LookSlot({
   );
 }
 
-/** Colour, pattern and cut. Never a claim about material, fit on a body, or the wearer. */
+/**
+ * Colour, pattern and cut. Never a claim about material, fit on a body, or the wearer.
+ *
+ * Delegates to `describeGarment`, which is where the same expression used to live three
+ * times over — with the same defect in each (S11 found `white solid_color sneaker` on the
+ * result screen).
+ */
 export function describe(item: WardrobeItem): string {
-  const parts = [item.color_primary, item.pattern, item.subcategory ?? item.category];
-  return parts.filter(Boolean).join(" ") || "A garment from your wardrobe";
+  return describeGarment(item) || "A garment from your wardrobe";
 }
 
 /**
@@ -108,7 +111,13 @@ function SlotImage({ item }: { item: WardrobeItem }) {
   if (!item.image_url) {
     return (
       <div className="text-ink-muted/25 grid h-full w-full place-items-center" aria-hidden="true">
-        <svg viewBox="0 0 64 64" className="w-1/3" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg
+          viewBox="0 0 64 64"
+          className="w-1/3"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
           <path d="M24 8l8 6 8-6 12 8-4 10-4-2v30H20V24l-4 2-4-10z" strokeLinejoin="round" />
         </svg>
       </div>

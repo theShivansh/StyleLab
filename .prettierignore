@@ -8,3 +8,20 @@ test-results/
 pnpm-lock.yaml
 .venv/
 __pycache__/
+var/
+
+# Prose. Prettier is a formatter for code, and for code it settles arguments nobody should
+# be having. On these it starts one: it rewrites *emphasis* as _emphasis_, re-indents
+# hand-wrapped paragraphs, and reflows the tables in docs/PROGRESS.md. Running it across
+# the specs in S11 produced four thousand lines of diff in DECISIONS.md alone, none of it a
+# change anybody wanted, and all of it burying the release it was part of.
+#
+# The gate covers the code, where it belongs, and `pnpm format:check` is in CI as of S11 so
+# the 33 source files that had drifted cannot drift again.
+*.md
+docs/
+prompts/
+
+# Agent configuration, not project code. Reformatting somebody's tool permissions in a
+# release commit is churn in a file whose diffs should always be worth reading.
+.claude/

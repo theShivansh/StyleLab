@@ -225,6 +225,24 @@ an advisor that re-asks once on a schema failure, so a fully patient compose is 
 calls. Exceeding the budget cancels the call — an abandoned request holds a connection and
 is still billed — and drops to step 9 over the same candidates.
 
+## Migrations (S11)
+
+Alembic, in `apps/api/migrations`, with `alembic upgrade head` as a deploy step. `create_all`
+remains for tests and local work and is **not** called when `APP_ENV=production` — it creates
+whatever is missing, which papers over a migration that did not run and leaves the database
+in a state no revision describes.
+
+`migrations/env.py` reads the URL from `Settings.resolved_database_url` rather than from
+`alembic.ini`. A second place that names the database is the one nobody updates, and the
+result is a migration that runs against a developer's SQLite file while the application talks
+to Postgres.
+
+The initial revision is a **baseline**, not a replayed history: it creates the schema as it
+stood at S11, because no deployed database exists whose history it would need to match.
+`tests/test_migrations.py` asserts a migrated database and a `create_all` database are
+indistinguishable, which is what stops the models and the migrations drifting apart in
+silence.
+
 ## 7. Async jobs
 
 ```text
@@ -245,6 +263,18 @@ partial-batch success · explicit error codes
 
 There is no offline path. A missing or invalid `GROQ_API_KEY` fails loudly at boot
 alongside the model-availability check, never silently into a stub.
+
+**Boot knows which environment it is in (S11).** `app/preflight.py` checks the settings that
+are correct on a laptop and wrong in a container — an ephemeral signing key, SQLite in the
+working directory, a `localhost` CORS origin — and under `APP_ENV=production` refuses to
+start on the ones that make the application incorrect rather than merely worse. It reports
+all of them at once, because fixing three settings one deploy apiece is three container
+builds to learn three things that were knowable before the first.
+
+It also verifies the **schema matches the models**, in every environment. `create_all` adds
+missing tables and never missing columns, so a database created before a column was added
+stays silently wrong until a query touches it — which is exactly what happened during the
+S11 audit and surfaced as *"Something went wrong on our side"* on every upload.
 
 No curated fallback outfit — a fallback made of unowned garments would violate the
 grounding rule. Degrade to the deterministic ranker over the same wardrobe, then to an
@@ -270,7 +300,16 @@ stays on `item_extractions`, which is ours and under the wardrobe's retention.
 - **row-level ownership on every wardrobe read, enforced in the query**
 - signed private image access
 - upload validation
-- rate limiting on upload and analysis specifically — they are the expensive paths
+- rate limiting on upload and analysis specifically — they are the expensive paths.
+  Built in S11 (`app/services/ratelimit.py`): token buckets keyed by user, charged **per
+  image** rather than per request, plus a per-address bucket on session creation. With no
+  authentication (B15), an unlimited supply of identities would be an unlimited supply of
+  everything else. Per instance; see docs/DEPLOYMENT.md.
+- response security headers on the web tier (S11) — CSP, `frame-ancestors 'none'`,
+  `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS
+- **hard deletion on a retention timer** (S11, `app/services/retention.py`). Soft deletion
+  stops a photograph being served; the sweep is what makes it stop existing, thirty days
+  later, which is what the privacy copy promises
 - environment secrets
 - sanitised provider errors
 - validated AI output

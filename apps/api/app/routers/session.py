@@ -24,7 +24,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.config import get_settings
-from app.deps import Sessions, Signer
+from app.deps import ClientKey, Rates, Sessions, Signer, enforce
 from app.repositories.wardrobe import WardrobeRepository
 from app.security.identity import SESSION_PURPOSE
 
@@ -32,8 +32,18 @@ router = APIRouter(tags=["session"])
 
 
 @router.post("/session", status_code=201)
-async def create_session(sessions: Sessions, signer: Signer) -> dict[str, Any]:
-    """Mint an anonymous identity and a token for it."""
+async def create_session(
+    sessions: Sessions, signer: Signer, rates: Rates, client: ClientKey
+) -> dict[str, Any]:
+    """Mint an anonymous identity and a token for it.
+
+    Limited per client address, and this is the limit that matters most: with no signup to
+    throttle instead (blocker B15), an unlimited supply of identities is an unlimited supply
+    of upload and composition quota. The address is the socket peer — see `deps.client_key`
+    on why `X-Forwarded-For` is uvicorn's business and not this handler's.
+    """
+    enforce(rates.sessions, client)
+
     settings = get_settings()
     user_id = f"user_{uuid.uuid4().hex[:16]}"
 

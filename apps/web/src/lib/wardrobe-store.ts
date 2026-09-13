@@ -13,7 +13,8 @@ import type { GarmentCategory, WardrobeItem } from "./schemas/wardrobe";
  * store is not a security boundary and must never be treated as one.
  */
 
-export type UploadState = "validating" | "rejected" | "uploading" | "analyzing" | "ready" | "failed";
+export type UploadState =
+  "validating" | "rejected" | "uploading" | "analyzing" | "ready" | "failed";
 
 export interface UploadEntry {
   /** Stable client id, assigned before the server knows about the file. */
@@ -74,6 +75,8 @@ interface WardrobeState {
   upsertItem: (item: WardrobeItem) => void;
   correctField: (itemId: string, field: string, value: string) => void;
   removeItem: (itemId: string) => void;
+  /** Replace the whole list. Used by "delete my whole wardrobe" and by its undo on failure. */
+  setItems: (items: WardrobeItem[]) => void;
 
   setPreferences: (patch: Partial<Preferences>) => void;
   resetPreferences: () => void;
@@ -144,8 +147,9 @@ export const useWardrobe = create<WardrobeState>()(
           }),
         })),
 
-      removeItem: (itemId) =>
-        set((s) => ({ items: s.items.filter((i) => i.item_id !== itemId) })),
+      removeItem: (itemId) => set((s) => ({ items: s.items.filter((i) => i.item_id !== itemId) })),
+
+      setItems: (items) => set({ items }),
 
       setPreferences: (patch) =>
         set((s) => ({ preferences: { ...s.preferences, ...patch }, preferencesTouched: true })),
@@ -155,7 +159,11 @@ export const useWardrobe = create<WardrobeState>()(
       readyItems: () => get().items.filter((i) => i.status === "ready"),
 
       missingRoles: (required) => {
-        const present = new Set(get().readyItems().map((i) => i.category));
+        const present = new Set(
+          get()
+            .readyItems()
+            .map((i) => i.category),
+        );
         return required.filter((role) => !present.has(role));
       },
 

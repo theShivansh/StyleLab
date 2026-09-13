@@ -4,6 +4,7 @@ import {
   setAnalyticsSink,
   track,
   type AnalyticsEnvelope,
+  type AnalyticsEvents,
 } from "./analytics";
 
 /**
@@ -75,5 +76,54 @@ describe("the analytics seam", () => {
 
     // An analytics failure costs an event, not the user's outfit.
     expect(() => track("outfit_saved", { outfit_id: "o1" })).not.toThrow();
+  });
+});
+
+describe("the capture half of the funnel", () => {
+  it("emits the events docs/ANALYTICS.md names for the step that matters most", () => {
+    // *"The drop-off that matters most is Landing → Images uploaded. With no demo wardrobe,
+    // that step is the entire cold-start risk."* Every one of these was in the spec from S0
+    // and none was emitted until S11 — the funnel was instrumented from `compose_clicked`
+    // onwards, which is to say from after the point where people actually leave.
+    const events: Array<keyof AnalyticsEvents> = [
+      "images_selected",
+      "image_rejected",
+      "extraction_completed",
+      "extraction_failed",
+      "extraction_field_corrected",
+      "item_deleted",
+      "wardrobe_cleared",
+    ];
+    const seen: string[] = [];
+    setAnalyticsSink((envelope) => seen.push(envelope.event));
+
+    track("images_selected", { count: 3, rejected: 0 });
+    track("image_rejected", { reason: "unsupported format" });
+    track("extraction_completed", { confidence: "mixed", duration_ms: 1841 });
+    track("extraction_failed", { code: "EXTRACTION_FAILED" });
+    track("extraction_field_corrected", { field: "color_primary" });
+    track("item_deleted", { role: "top" });
+    track("wardrobe_cleared", { items: 6 });
+
+    expect(seen).toEqual(events);
+  });
+
+  it("sends the corrected field's name and never its value", () => {
+    // The spec asked for "field name, from → to" and S11 declined the second half. The
+    // values of `subcategory`, `pattern`, `color_primary` and `fit` are free text a vision
+    // model wrote while looking at a photograph taken inside somebody's home, and blocker
+    // B18 is open precisely because they can carry a description of a person in the frame.
+    //
+    // Asserted on the payload's shape rather than on one string, so adding the value back
+    // is a red test rather than a quiet regression.
+    let captured: Record<string, unknown> = {};
+    setAnalyticsSink((envelope) => {
+      captured = envelope.properties as Record<string, unknown>;
+    });
+
+    track("extraction_field_corrected", { field: "subcategory" });
+
+    expect(Object.keys(captured)).toEqual(["field"]);
+    expect(Object.values(captured).join(" ")).not.toContain("navy");
   });
 });

@@ -282,7 +282,14 @@ def test_another_users_item_answers_404_and_not_403(api, caller, wait_for_job):
 def test_an_item_that_never_existed_answers_the_same_as_one_owned_by_someone_else(
     api, caller, wait_for_job
 ):
-    """Indistinguishable, which is the requirement."""
+    """Indistinguishable, which is the requirement.
+
+    S11 added a per-request `request_id` to the envelope, which made the two bodies stop
+    being byte-identical without making them distinguishable — so the comparison names what
+    it means instead. The stricter form is the better test anyway: it says the id is the
+    *only* thing that may differ, which also pins that the id carries nothing about the
+    item. An id derived from the path would satisfy the old assertion and leak.
+    """
     item_id = ready_item(api, caller, wait_for_job)
     intruder = api.start_session()
 
@@ -290,7 +297,14 @@ def test_an_item_that_never_existed_answers_the_same_as_one_owned_by_someone_els
     fictional = api.get("/api/v1/wardrobe/items/item_does_not_exist", headers=intruder.headers)
 
     assert theirs.status_code == fictional.status_code == 404
-    assert theirs.json() == fictional.json()
+
+    identifying = {"request_id"}
+    assert {k: v for k, v in theirs.json()["error"].items() if k not in identifying} == {
+        k: v for k, v in fictional.json()["error"].items() if k not in identifying
+    }
+    # Not derived from what was asked for, in either direction.
+    assert item_id not in theirs.json()["error"]["request_id"]
+    assert theirs.json()["error"]["request_id"] != fictional.json()["error"]["request_id"]
 
 
 # --- images -------------------------------------------------------------------------------

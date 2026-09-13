@@ -47,9 +47,7 @@ export const uploadResultSchema = z.object({
       asset_id: z.string().nullable(),
       job_id: z.string().nullable(),
       status: z.enum(["analyzing", "rejected"]),
-      error: z
-        .object({ code: z.string(), message: z.string() })
-        .optional(),
+      error: z.object({ code: z.string(), message: z.string() }).optional(),
     }),
   ),
 });
@@ -110,4 +108,41 @@ export function isHedged(item: WardrobeItem, field: string, floor: number): bool
   if (ALWAYS_A_GUESS.includes(field)) return true; // no score settles this one
   const score = item.field_confidence[field];
   return score === undefined || score < floor;
+}
+
+/**
+ * One garment, in words: colour, pattern, cut. Never material, never fit on a body, never
+ * the wearer — there is no field here that could describe any of them.
+ *
+ * ## Why the humanising step
+ *
+ * S11 found `white solid_color sneaker` rendered on the result screen. `pattern`,
+ * `subcategory`, `color_primary` and `fit` are genuinely open sets in the world, so they
+ * cannot be a closed vocabulary the way `style_tags` became in S8 (blocker B18) — which
+ * means whatever the model writes reaches the screen. It usually writes English. Sometimes
+ * it writes an identifier, because it has read a great many JSON schemas.
+ *
+ * Normalising here rather than at extraction is deliberate. The stored value is what the
+ * model actually said, which is what the audit trail is for; this is presentation, and
+ * presentation is where a machine-shaped word should stop being one.
+ *
+ * ## Why one function
+ *
+ * There were three copies of this expression — the look slot, the wardrobe card's alt text
+ * and the outfit page — built from the same fields in the same order, and all three had the
+ * same underscore. Three copies of a rule is three chances to fix it once.
+ */
+export function describeGarment(item: {
+  color_primary?: string | null;
+  pattern?: string | null;
+  subcategory?: string | null;
+  category?: string | null;
+}): string {
+  const parts = [item.color_primary, item.pattern, item.subcategory ?? item.category];
+  return parts.filter(Boolean).map(humanise).join(" ");
+}
+
+/** `solid_color` → `solid color`. Identifiers are for programs; this string is for a person. */
+function humanise(value: string | null | undefined): string {
+  return String(value).replace(/[_-]+/g, " ").trim();
 }

@@ -238,7 +238,15 @@ class OutfitComposer:
                 candidates=candidates,
             )
             if self._circuit is not None:
-                self._circuit.record(time.perf_counter() - started)
+                # A timeout is stronger evidence than a slow answer, so it opens the breaker
+                # on its own — see `LatencyCircuit.trip`. Read off the rejections rather than
+                # inferred from the elapsed time, because "took slightly over budget" and
+                # "was cancelled at the budget" are indistinguishable by the clock and are
+                # not the same thing at all.
+                if any(r.reason == "advisor_timeout" for r in service.rejections):
+                    self._circuit.trip()
+                else:
+                    self._circuit.record(time.perf_counter() - started)
 
             if advice.outfit is None:
                 # Not a failure. The wardrobe cannot fill a required role, and naming that

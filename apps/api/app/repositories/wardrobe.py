@@ -220,6 +220,32 @@ class DeletionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PurgeableAsset:
+    """An expired asset, reduced to the two things the sweep needs.
+
+    Not a `StoredAsset`. The sweep has no business holding a mime type, a checksum or an
+    owner — it unlinks a file and records that it did. Handing it the full row would mean
+    the one unscoped read in the repository returned everything about everyone.
+    """
+
+    asset_id: str
+    storage_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class WardrobeDeletion:
+    """What clearing a whole wardrobe did.
+
+    Counts rather than ids: the caller is a user deleting everything, and a list of the
+    hundred ids they just destroyed is not an answer to anything they asked.
+    """
+
+    items: int
+    assets: int
+    outfits: int
+
+
+@dataclass(frozen=True, slots=True)
 class StoredExtraction:
     provider: str
     model: str
@@ -402,6 +428,56 @@ class WardrobeRepository:
 
         self._session.flush()
         return DeletionResult(deleted=True, affected_outfits=affected)
+
+    def delete_all(self, user_id: str) -> WardrobeDeletion:
+        """Soft-delete everything this user owns, in one transaction.
+
+        docs/SECURITY-PRIVACY.md: *"A user must be able to remove their entire wardrobe in
+        one action."* That sentence has been in the spec since S0 and nothing implemented
+        it — the only deletion was per item, so exercising the right meant tapping delete
+        once per photograph and hoping none was missed.
+
+        Written as three scoped statements rather than by calling `delete_with_cascade` in
+        a loop. The loop would be N+1 queries and, worse, N transactions worth of partial
+        state: a failure halfway through a hundred-item wardrobe leaves the user having
+        asked to delete everything and looking at a screen with forty garments on it.
+
+        Outfits become `incomplete` rather than being deleted, the same as a single
+        deletion. It looks odd for an empty wardrobe and it is the consistent rule, and an
+        outfit row is the record that the user composed something — not a garment.
+        """
+        now = _now()
+
+        items = list(
+            self._session.execute(
+                _scoped_select(user_id, WardrobeItemRow).where(
+                    WardrobeItemRow.deleted_at.is_(None)
+                )
+            ).scalars()
+        )
+        for item in items:
+            item.deleted_at = now
+
+        assets = list(
+            self._session.execute(
+                _scoped_select(user_id, AssetRow).where(AssetRow.deleted_at.is_(None))
+            ).scalars()
+        )
+        for asset in assets:
+            asset.deleted_at = now
+
+        outfits = list(
+            self._session.execute(
+                _scoped_select(user_id, OutfitRow).where(OutfitRow.status != "incomplete")
+            ).scalars()
+        )
+        for outfit in outfits:
+            outfit.status = "incomplete"
+
+        self._session.flush()
+        return WardrobeDeletion(
+            items=len(items), assets=len(assets), outfits=len(outfits)
+        )
 
     # --- reads that carry row facts ------------------------------------------------------
 
@@ -812,6 +888,53 @@ class AssetRepository:
         ).scalars().first()
         return _to_stored_asset(row) if row else None
 
+    def expired(self, user_id: str, *, cutoff: datetime, limit: int) -> list[PurgeableAsset]:
+        """This user's assets whose retention window closed and whose bytes are still there.
+
+        Scoped, like everything else here, and that cost something worth naming. A retention
+        sweep wants to ask "which assets anywhere are past their window", and answering it
+        directly would have been one query instead of one per user — but it would also have
+        been the unscoped read path `tests/test_query_scoping.py` exists to make impossible,
+        arriving through the back door as a maintenance job.
+
+        So the sweep enumerates owners first (`app/services/retention.py`) and comes back
+        here per user. The invariant is that no read of **owned data** is unscoped; the set
+        of owners is not owned data. The extra queries are the price, and at this project's
+        scale they are not a price worth arguing about.
+
+        `limit` bounds the batch. A sweep that unlinked a year of accumulated files in one
+        transaction would hold a lock for as long as the object store took.
+        """
+        rows = (
+            self._session.execute(
+                _scoped_select(user_id, AssetRow)
+                .where(
+                    AssetRow.deleted_at.is_not(None),
+                    AssetRow.deleted_at < cutoff,
+                    AssetRow.purged_at.is_(None),
+                )
+                .order_by(AssetRow.deleted_at)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+        return [PurgeableAsset(asset_id=row.id, storage_key=row.storage_key) for row in rows]
+
+    def mark_purged(self, user_id: str, asset_id: str, *, at: datetime | None = None) -> None:
+        """Record that the bytes are gone.
+
+        Set **after** the store has been asked to delete them, never before. The other order
+        would mean a failure mid-sweep leaves a row claiming a file is gone while the file
+        is still there — a record that is worse than no record, because somebody would
+        answer a deletion request from it.
+        """
+        row = self._session.execute(
+            _scoped_select(user_id, AssetRow).where(AssetRow.id == asset_id)
+        ).scalar_one_or_none()
+        if row is not None:
+            row.purged_at = at or _now()
+
     def item_for_asset(self, user_id: str, asset_id: str) -> str | None:
         """The live wardrobe item backed by this asset, if any."""
         row = self._session.execute(
@@ -840,9 +963,11 @@ __all__ = [
     "DeletionResult",
     "ExtractionAuditRepository",
     "OutfitSlot",
+    "PurgeableAsset",
     "StoredAsset",
     "StoredExtraction",
     "StoredItem",
     "StoredOutfit",
+    "WardrobeDeletion",
     "WardrobeRepository",
 ]

@@ -74,3 +74,41 @@ def test_opening_and_closing_are_both_logged(caplog):
     levels = [record.levelno for record in caplog.records]
     assert levels.count(logging.WARNING) == 2
     assert logging.INFO in levels
+
+
+def test_a_timeout_opens_it_on_its_own():
+    """A breach and a timeout are not the same event, which S11 found by watching rather than
+    by reading.
+
+    A breach is a measurement: the advisor answered and took too long. A timeout is a failure
+    to answer at all — the call was cancelled at the budget and the whole of it bought
+    nothing. Requiring two of those in a row made the middle rung of the ladder unreachable
+    in exactly the conditions it exists for: the observed sequence was fifteen seconds to the
+    deterministic ranker, fifteen more to the ranker again, and only then the reduced crew
+    that takes about four.
+    """
+    circuit = LatencyCircuit(budget_s=15.0)
+
+    circuit.trip()
+
+    assert circuit.tripped is True
+
+
+def test_a_good_run_still_closes_a_breaker_a_timeout_opened():
+    """Recovery stays optimistic. A timeout is stronger evidence of a problem, not a
+    different kind of problem — one run inside budget is still the end of it."""
+    circuit = LatencyCircuit(budget_s=1.0)
+    circuit.trip()
+
+    circuit.record(0.5)
+
+    assert circuit.tripped is False
+
+
+def test_tripping_an_open_breaker_is_a_no_op():
+    circuit = LatencyCircuit(budget_s=1.0)
+    circuit.trip()
+
+    circuit.trip()
+
+    assert circuit.tripped is True

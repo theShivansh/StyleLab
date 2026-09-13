@@ -18,12 +18,12 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S7 | Result + swap | 06 | done | (this commit) | L T U I E B AI | Compose is an async job, swap is synchronous and calls no model. Result screen, alternatives scored in the look, save, share-as-text. 9 mutations, 9 caught. 463 api + 14 ai-eval + 57 web unit + 54 e2e (desktop + mobile). Live: a real look composed from real photographs against Groq. Measured the account's output-token limit and opened B17. |
 | S8 | AI eval harness | 10 | done | (this commit) | L T U E B AI | Refusal harness a reviewer can drive (`python tests/ai/runner.py --response FILE`), 19 scenarios, and a case registry resolved against the repo. Found four real defects and fixed them: a fibre claim shown as fact, an unseen `style_tags` channel into the advice prompt, meaningless quality warnings, and no ceiling on a compose. Generation telemetry + the OBSERVABILITY metric rollup. 14 mutations, 13 caught first pass, 1 survived and was killed. 486 api + 72 ai-eval + 59 web unit + 56 e2e. |
 | S8b | Agent crew + trends | 14 | done | (this commit) | L T U E B AI | Six-role CrewAI crew on our own transport (`crewai.BaseLLM`), so the whole crew runs with no API key. Live trend grounding via Exa behind a `SearchTransport` seam; the committed corpus was dropped rather than built. Self-evaluating Critic with a bounded revision loop, latency circuit breaker, and the ablation test — **B8 and B11 closed**. Found that an advisor could invent a trend citation and nothing stopped it. 24/25 eval cases covered, 0 deferred. 17 mutations, 16 caught first pass. 522 api + 107 ai-eval + 60 web unit + 58 e2e. Live: a real look from the full crew, all six strict schemas accepted, 11.7s for five agents. |
-| S9 | Planner + analytics | 07 | todo | — | — | P1, cuttable |
-| S10 | Recruiter demo | 11 | todo | — | — | |
-| S11 | Harden + deploy | 08 | todo | — | — | |
+| S9 | Planner + analytics | 07 | skipped | — | — | Skipped by the user's instruction, S11 taken first. The **analytics** half was not skipped with it: S11's audit found the whole capture side of the funnel uninstrumented and built it (`images_selected` through `wardrobe_cleared`), which is the part docs/ANALYTICS.md calls the entire cold-start risk. The **planner** is genuinely not built and `flags.planner` is `false`. |
+| S10 | Recruiter demo | 11 | skipped | — | — | Skipped by the user's instruction. docs/DEMO-SCRIPT.md exists and was updated in S11 with the measured pacing constraint. |
+| S11 | Harden + deploy | 08 | done | (this commit) | L T U I E B A AI | Release audit. **B12 and B16 closed.** Environment-aware boot (`APP_ENV`, `app/preflight.py`) that refuses production on a local default and refuses *any* environment on a schema mismatch; Alembic with a baseline revision and a drift test; rate limiting on the three paths that cost money; request ids; a retention sweep that makes deletion true on disk; whole-wardrobe deletion; response security headers. Seven defects found by running the thing rather than reading it — a stale local schema failing every upload, a CSP that blanked the dev server, a duplicated degradation disclosure, a raw enum in user-facing copy, an 18px touch target, a flaky ordering assertion, and a circuit breaker that made its own middle rung unreachable. The formatting gate, listed in every phase prompt, ran for the first time. 593 api + 109 ai-eval + 66 web unit + 64 e2e. Live: the whole path on real photographs — upload, extract, correct, compose, result — plus the ladder's middle rung measured at **4.4s** for Architect + Editor against a 15s budget, which is what the breaker change makes reachable. |
 | S12 | Final review | 13 | todo | — | — | review only |
 
-States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip`
+States: `todo` · `in-progress` · `done` · `done-with-debt` · `skip` · `skipped`
 
 ## Gate legend
 
@@ -44,19 +44,24 @@ key, so it is a local-and-main gate rather than a per-push one.
       user's own garment photos.
 - [x] B5 — RESOLVED 2026-09-12. Vision primary qwen/qwen3.8-27b, fallback
       qwen/qwen3.6-27b (availability only, never for quality). See docs/DECISIONS.md.
-- [ ] B6 — Cold start. **Materially reduced by S6, and sharpened by S7.** The live path now
+- [ ] B6 — Cold start. **Materially reduced by S6, sharpened by S7, and measured in S11.**
+      S11 ran the whole path in a browser on real photographs: upload three, watch them
+      resolve, compose, see the result screen. It works, and it produced the one number the
+      demo script needed — see item 2 below, which is now a measurement rather than a
+      caution. The live path now
       runs end to end — upload, extract, compose, swap — so the risk is no longer "does it
       work". Three things still to do before a live demo:
         1. **Set `SESSION_SECRET`.** Without it the API signs with a per-process key, so a
            pre-seeded demo wardrobe becomes unreachable the moment the process restarts —
            which is exactly what happens when someone reloads a dev server mid-demo. Found
            the hard way while verifying S6 in the browser.
-        2. **Do not upload six photographs at once on this account.** S7 measured the tier's
-           limits (B17): concurrent extractions exceed the per-minute output budget and the
-           provider refuses some of them. The product handles it correctly — one card fails
-           with a retry, and composition names the gap rather than inventing a garment — but
-           an interviewer would watch two cards fail. Pre-seed the wardrobe, or upload in
-           twos with a pause.
+        2. **Do not upload six photographs at once, and pause before composing.** S7
+           measured the tier's upload limits (B17). S11 measured the other half by doing it:
+           three extractions followed immediately by a compose put the crew over its 15s
+           budget, and the look came back styled by the deterministic ranker with the depth
+           disclosed on screen. That is the ladder working exactly as designed and it is not
+           the version to show an interviewer. About a minute between the last upload and
+           the compose is enough. Recorded in docs/DEMO-SCRIPT.md.
         3. Rehearse and time the live path; hold the budget in docs/DEMO-SCRIPT.md.
 - [x] B7 — CLOSED 2026-09-12. Key provisioned by the user in `.env`. It immediately paid
       for itself: the first real run of `tests/live` failed three ways, and two were
@@ -88,24 +93,46 @@ key, so it is a local-and-main gate rather than a per-push one.
       the two load-bearing roles refusing to be ablated at all. Open from S4 to S8b and
       deliberately never stubbed — a placeholder that cannot fail converts "we have not
       checked" into "we have checked". Every role earned its place; nobody was deleted.
-- [ ] B12 — No migrations. `Base.metadata.create_all` covers tests and local work only;
-      Alembic (or Supabase migrations) lands with deployment in S11. Until then the schema
-      only exists where someone has run create_all. S6 made the local default concrete: an
-      unconfigured `DATABASE_URL` resolves to a file-backed SQLite database in the working
-      directory, gitignored, logged by dialect at boot.
+- [x] B12 — CLOSED 2026-09-13. Alembic in `apps/api/migrations`, `alembic upgrade head` as
+      a deploy step, and `create_all` no longer called when `APP_ENV=production` — it creates
+      whatever is missing, which papers over a migration that did not run.
+      **It closed by biting first.** Adding `assets.purged_at` for the retention sweep broke
+      the local database, which `create_all` had built months of sessions earlier:
+      `create_all` adds missing *tables* and has never added a missing *column*, so every
+      upload failed on `no such column` while the user-facing message read "Something went
+      wrong on our side." So the close includes `preflight.verify_schema`, which compares the
+      live database to the models at boot and refuses to serve if they differ — fatal in every
+      environment, because a schema the queries do not match means every request fails anyway
+      and the only question is whether the operator learns it from a boot message naming the
+      fix. `tests/test_migrations.py` keeps it closed by asserting a migrated database and a
+      `create_all` database are indistinguishable.
 - [ ] B14 — The job runner is in-process (`BackgroundJobs`, asyncio tasks). It survives a
       single instance and nothing more: a restart loses queued extractions, and a second
       instance knows nothing of the first's jobs. The seam is deliberate — `submit` takes a
       factory and returns nothing, so a durable queue replaces the class without touching
-      the pipeline. Lands with deployment in S11. What is **not** deferred is the part that
-      would be expensive to retrofit: nothing above the runner assumes a synchronous result.
+      the pipeline. What is **not** deferred is the part that would be expensive to retrofit:
+      nothing above the runner assumes a synchronous result.
+      **Not closed in S11, and the phase made the shape of it clearer rather than smaller.**
+      Two more things are now in-process for the same reason and with the same seam: the rate
+      limiter (per instance, so two replicas allow twice the quota) and the retention sweeper
+      (a deployment that scales to zero must run it as a scheduled job, or deletion silently
+      stops happening). All three are documented in docs/DEPLOYMENT.md rather than assumed,
+      because the failure in each case is quiet.
 - [ ] B15 — No real authentication. `POST /session` mints a signed token for anyone who
       asks and creates an anonymous user to go with it; there is no password, no
       verification and no revocation. The **shape** is right and is what matters: identity
       arrives as a bearer token this API signed, and `user_id` is read out of that signature
       rather than from the request, so no caller can choose whose wardrobe to read. Supabase
-      auth in S11 replaces the minting and changes nothing else. Also: set `SESSION_SECRET`
-      in any environment where sessions must survive a restart or a second instance (B6).
+      auth replaces the minting and changes nothing else. Also: set `SESSION_SECRET` in any
+      environment where sessions must survive a restart or a second instance — as of S11,
+      `APP_ENV=production` refuses to boot without it, and refuses one shorter than 32
+      characters.
+      **Deliberately not closed in S11**, and the prompt's own acceptance criterion is why:
+      *"a recruiter can... reach a composed outfit they can swap — with no account and no
+      credentials."* Real accounts would defeat the thing the phase is graded on. What S11
+      did instead was make the consequence survivable: with identities free, the quotas that
+      matter are rate-limited (B15's cost was always that anonymous tokens are unlimited,
+      not that they are anonymous).
 - [ ] B17 — Provider tier limits. Measured in S7 from a live response header plus the 429
       body: 1000 requests/minute and 8000 **input** tokens/minute, alongside a separate
       **output** tokens-per-minute ceiling of 1000 per model that the headers do not report.
@@ -136,6 +163,20 @@ key, so it is a local-and-main gate rather than a per-push one.
       stays under five seconds for the 100-odd tests that do not need a crew. Worth revisiting
       only if the framework starts earning less than it costs — the ablation test is the thing
       that would say so.
+- [ ] B20 — No hosted `ObjectStore`. `LocalObjectStore` writes to `STORAGE_ROOT`, so a
+      deployment must mount a volume or lose every photograph on the next deploy.
+      `SupabaseObjectStore` has been named in `app/services/storage.py` as "S11" since S4 and
+      S11 did not build it, for the reason S8b gave about vendor tracing: an integration
+      nobody can run is not an integration, and there is no Supabase project to verify it
+      against. Preflight warns rather than refusing — refusing would mean no deployment could
+      start at all. The seam is four methods and the same `ObjectStore` Protocol.
+- [ ] B21 — The Content-Security-Policy carries `script-src 'unsafe-inline'`. Next inlines
+      its bootstrap and its streamed flight data as `<script>` elements, so a strict policy
+      needs a nonce plumbed through middleware. Named rather than quietly omitted: it is the
+      one directive in the list weaker than it looks, and everything around it —
+      `frame-ancestors 'none'`, `object-src 'none'`, `base-uri`, `form-action`, and the
+      `img-src`/`connect-src` allow-lists — is real. Worth doing before any deployment that
+      renders content this project did not write.
 - [ ] B18 — Free-text extraction fields can still carry a description of the person in the
       photograph. S8 closed the channel that mattered most: `style_tags` is a closed
       vocabulary now, because it is never rendered to the user and *is* interpolated into the
@@ -147,12 +188,30 @@ key, so it is a local-and-main gate rather than a per-push one.
       is rendered on the card and correctable in one tap, so a bad value is visible to its
       subject. Case 09 is `partial` until this is decided. Options: a narrower `subcategory`
       vocabulary derived from the extractions we actually see, or a second cheap model pass
-      that classifies rather than describes. Not a demo blocker; decide in S9.
-- [ ] B16 — Uploaded images are only ever soft-deleted. `deleted_at` is set on the item and
-      the asset and the file stops being served, but the bytes stay on disk — deliberate,
-      because docs/DATA-MODEL.md wants deletion reversible by support. A retention timer
-      that actually unlinks them belongs with the privacy flow in S11, and until it exists
-      "delete my photographs" is not fully true at the filesystem level.
+      that classifies rather than describes. Not a demo blocker.
+      **S11 found the second consequence.** docs/ANALYTICS.md asks
+      `extraction_field_corrected` to carry "field name, from → to", and the values in that
+      arrow are exactly these fields — so the event as specified would pipe the channel we
+      already know is imperfect to a third party. S11 shipped the field name only; the KPI
+      the spec actually wants (extraction acceptance rate) is a count per field either way.
+      Reopen the values if and when B18 closes.
+      **And the third.** `white solid_color sneaker` was rendering on the result screen: the
+      raw model value reaching the user unchanged. Fixed in presentation
+      (`describeGarment`), which is where a machine-shaped word should stop being one — the
+      stored value is still what the model said, because that is what the audit trail is for.
+- [x] B16 — CLOSED 2026-09-13. `app/services/retention.py` sweeps at boot and hourly,
+      unlinking any asset whose thirty-day window has closed and recording it in
+      `assets.purged_at`. Soft deletion was always half a trade — docs/DATA-MODEL.md wants
+      deletion reversible by support, which is a good reason for a window and not a reason to
+      stop there.
+      Closing it also caught the copy: the landing page said **"Delete means delete"** over
+      *"Remove one garment or the whole wardrobe. We tell you which looks that breaks before
+      you confirm"* — and at the audit none of the three claims was quite true. Deletion was
+      soft, there was no way to remove a whole wardrobe, and affected looks were named after
+      the fact. `DELETE /wardrobe/items` now exists with a two-tap confirmation, and the copy
+      states the window in three places: the landing card, the confirmation, and the API
+      response. A retention period the product does not state is one the user has not agreed
+      to.
 - [x] B13 — CLOSED 2026-09-12. Three photographs supplied by the user. They happen to be a
       shirt, a pair of chinos and a white sneaker — a top, a bottom and footwear, which is
       exactly one complete outfit and the minimum the composer needs. Live extraction reads

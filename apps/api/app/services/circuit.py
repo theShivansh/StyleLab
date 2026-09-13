@@ -71,6 +71,28 @@ class LatencyCircuit:
             },
         )
 
+    def trip(self) -> None:
+        """Open the breaker now, without waiting for a second breach.
+
+        For the case a breach and a timeout are **not** the same event, which S11 found by
+        watching the ladder run rather than by reading it. A breach is a measurement: the
+        advisor answered, and took too long. A timeout is a failure to answer at all — the
+        call was cancelled at the budget and the whole of it was spent for nothing.
+
+        Requiring two of those in a row before reducing depth meant the middle rung was
+        unreachable in the situation it exists for. The observed sequence was: compose once,
+        wait fifteen seconds, get the deterministic ranker; compose again, wait fifteen more,
+        get the ranker again; only then does the reduced crew — two calls, about four
+        seconds — come into play. Thirty seconds of a user's time to arrive at a rung the
+        first timeout was already sufficient evidence for.
+
+        The "twice in a row" rule still governs ordinary slowness, which is what it was
+        written about.
+        """
+        if not self.tripped:
+            logger.warning("advisor timed out; circuit opened without waiting for a second")
+        self._consecutive = self.breaches_to_trip
+
     def reset(self) -> None:
         self._consecutive = 0
 

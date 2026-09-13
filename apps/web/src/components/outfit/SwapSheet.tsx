@@ -187,9 +187,7 @@ function EmptySlot({ role, description }: { role: string; description?: string |
         This is the only {role} in your wardrobe, so there is nothing to swap it for.
       </p>
       {description && (
-        <p className="text-ink-muted text-sm">
-          Add {description} and this slot becomes a choice.
-        </p>
+        <p className="text-ink-muted text-sm">Add {description} and this slot becomes a choice.</p>
       )}
       <ButtonLink href="/wardrobe" size="lg">
         Add a {role}

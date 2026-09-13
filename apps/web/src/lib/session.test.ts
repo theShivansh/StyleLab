@@ -31,9 +31,7 @@ afterEach(() => {
 
 describe("sessionToken", () => {
   it("creates a session when there is not one and remembers it", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(mockSessionResponse("tok-1"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockSessionResponse("tok-1"));
 
     expect(await sessionToken()).toBe("tok-1");
 
@@ -54,9 +52,7 @@ describe("sessionToken", () => {
     // The bug this prevents is not subtle. A cold wardrobe screen fires several requests at
     // once; without the shared promise each starts its own session, and the user ends up
     // with four empty wardrobes and their photographs spread across them.
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(mockSessionResponse("tok-1"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockSessionResponse("tok-1"));
 
     const tokens = await Promise.all([sessionToken(), sessionToken(), sessionToken()]);
 
@@ -65,9 +61,7 @@ describe("sessionToken", () => {
   });
 
   it("does not send anything that names a user", async () => {
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(mockSessionResponse("tok-1"));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockSessionResponse("tok-1"));
 
     await sessionToken();
 

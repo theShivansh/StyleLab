@@ -28,8 +28,8 @@ export function SignatureInteraction() {
           </h2>
           <p className="text-lede text-ink-muted mt-6 max-w-[46ch]">
             Ask <em>what if?</em> and swap a single slot. The other pieces hold still — no page
-            reload, no rebuild, no losing the look you almost liked. Alternatives are drawn
-            only from your own closet, so an empty list is an honest answer.
+            reload, no rebuild, no losing the look you almost liked. Alternatives are drawn only
+            from your own closet, so an empty list is an honest answer.
           </p>
         </Reveal>
 

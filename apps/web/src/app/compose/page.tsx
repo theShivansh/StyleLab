@@ -48,12 +48,17 @@ export default function ComposePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-12 md:px-8 md:py-16">
-      <Link href="/wardrobe" className="text-ink-muted hover:text-ink text-sm">
+      <Link
+        href="/wardrobe"
+        className="text-ink-muted hover:text-ink -ml-2 inline-flex min-h-11 items-center rounded-[var(--radius-control)] px-2 text-sm"
+      >
         ← Wardrobe
       </Link>
       <h1 className="text-headline mt-3">Compose an outfit</h1>
       <p className="text-ink-muted mt-2 text-sm">
-        {touched ? "Tuned to your answers." : "Sensible defaults are already set — skip straight to it."}
+        {touched
+          ? "Tuned to your answers."
+          : "Sensible defaults are already set — skip straight to it."}
       </p>
 
       <div className="mt-10 space-y-4">
@@ -106,9 +111,7 @@ export default function ComposePage() {
           // The honest gap state. No invented garment, no partial outfit dressed up as
           // complete — name what is missing and offer the way to fix it.
           <Card className="p-6">
-            <h2 className="text-title">
-              You have no {formatRoles(missing)} yet
-            </h2>
+            <h2 className="text-title">You have no {formatRoles(missing)} yet</h2>
             <p className="text-ink-muted mt-2 text-sm">
               Add {missing.length === 1 ? "one" : "them"} and this look finishes itself. Nothing
               gets invented on your behalf.

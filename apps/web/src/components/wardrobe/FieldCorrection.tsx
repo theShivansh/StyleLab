@@ -57,8 +57,8 @@ export function FieldCorrection({
     <Sheet open={open} onClose={onClose} title="Set it straight">
       <div className="space-y-5">
         <p className="text-ink-muted text-sm">
-          Pick the field and tell us what it actually is. Your answer sticks — re-analysing
-          this photo later will not overwrite it.
+          Pick the field and tell us what it actually is. Your answer sticks — re-analysing this
+          photo later will not overwrite it.
         </p>
 
         <div className="space-y-2">
@@ -124,7 +124,12 @@ export function FieldCorrection({
         </div>
 
         <div className="flex gap-2">
-          <Button size="lg" onClick={submit} disabled={value.trim().length === 0} className="flex-1">
+          <Button
+            size="lg"
+            onClick={submit}
+            disabled={value.trim().length === 0}
+            className="flex-1"
+          >
             Save correction
           </Button>
           <Button size="lg" variant="secondary" onClick={onClose}>

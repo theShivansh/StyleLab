@@ -1,10 +1,6 @@
 {
   "outfit": {
-    "item_ids": [
-      "own-top",
-      "own-bottom",
-      "own-shoe"
-    ],
+    "item_ids": ["own-top", "own-bottom", "own-shoe"],
     "name": "Quiet Navy",
     "occasion": "everyday",
     "match_score": 86

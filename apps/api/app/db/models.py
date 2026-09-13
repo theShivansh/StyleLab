@@ -81,6 +81,16 @@ class AssetRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     #: Soft deletion: the privacy flow needs deletion observable, not silent.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: When the **bytes** were unlinked from the object store, which is a different event
+    #: from when the user asked. `deleted_at` starts the retention window and stops the file
+    #: being served; this is set when the window expires and the file is actually gone
+    #: (`app/services/retention.py`).
+    #:
+    #: A column rather than an inference, because the two states have to be distinguishable
+    #: for the sweep to be idempotent and for anyone to be able to answer "is that
+    #: photograph still on a disk somewhere" with a query rather than a guess. Nullable, so
+    #: it is also the flag: null means the retention window is still running.
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class WardrobeItemRow(Base):

@@ -16,6 +16,7 @@ import { useWardrobe } from "@/lib/wardrobe-store";
 import { getOutfit, saveOutfit, swapSlot } from "@/lib/api/outfits";
 import { userMessage } from "@/lib/errors";
 import type { Alternative, Outfit } from "@/lib/schemas/outfit";
+import { describeGarment } from "@/lib/schemas/wardrobe";
 import type { GarmentCategory } from "@/lib/schemas/wardrobe";
 
 /**
@@ -205,8 +206,8 @@ export default function OutfitPage() {
             This look is missing its {outfit.missing_roles.join(" and ")}
           </h2>
           <p className="text-ink-muted mt-2 text-sm">
-            You removed that garment from your wardrobe. Pick another and the look is whole
-            again — nothing gets substituted on your behalf.
+            You removed that garment from your wardrobe. Pick another and the look is whole again —
+            nothing gets substituted on your behalf.
           </p>
         </Card>
       )}
@@ -251,8 +252,8 @@ export default function OutfitPage() {
             <Card className="p-6">
               <p className="text-eyebrow text-ink-muted uppercase">Style Match</p>
               <p className="text-ink-muted mt-2 text-sm">
-                Held back until the look is whole. Scoring a look with a piece missing would
-                be scoring something you cannot wear.
+                Held back until the look is whole. Scoring a look with a piece missing would be
+                scoring something you cannot wear.
               </p>
             </Card>
           )}
@@ -264,11 +265,7 @@ export default function OutfitPage() {
             <Button variant="secondary" onClick={handleShare} disabled={busy}>
               {copied ? "Copied" : "Copy the look"}
             </Button>
-            <Button
-              variant="ghost"
-              onClick={handleRegenerate}
-              disabled={busy || composing}
-            >
+            <Button variant="ghost" onClick={handleRegenerate} disabled={busy || composing}>
               {composing ? "Composing…" : "Regenerate"}
             </Button>
           </div>
@@ -283,8 +280,8 @@ export default function OutfitPage() {
           {composition.state === "gap" && (
             <p className="text-ink-muted text-sm">
               Your wardrobe can&apos;t fill{" "}
-              {composition.gap?.missing_roles.join(" or ") ?? "every slot"} right now, so this
-              look stands. Nothing gets substituted.
+              {composition.gap?.missing_roles.join(" or ") ?? "every slot"} right now, so this look
+              stands. Nothing gets substituted.
             </p>
           )}
 
@@ -365,8 +362,8 @@ export default function OutfitPage() {
               </ul>
               {/* Generic only. No brand, price, merchant or link — the product sells nothing. */}
               <p className="text-ink-muted mt-3 text-xs">
-                Described generically on purpose. We don&apos;t sell anything and we
-                won&apos;t send you anywhere to buy it.
+                Described generically on purpose. We don&apos;t sell anything and we won&apos;t send
+                you anywhere to buy it.
               </p>
             </Card>
           )}
@@ -412,7 +409,10 @@ function formatDate(value: string): string {
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-6xl px-5 py-12 md:px-8 md:py-16">
-      <Link href="/compose" className="text-ink-muted hover:text-ink text-sm">
+      <Link
+        href="/compose"
+        className="text-ink-muted hover:text-ink -ml-2 inline-flex min-h-11 items-center rounded-[var(--radius-control)] px-2 text-sm"
+      >
         ← Compose
       </Link>
       <div className="mt-3">{children}</div>
@@ -422,7 +422,5 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function slotText(item: Outfit["slots"][number]["item"]): string {
   if (!item) return "(removed)";
-  return [item.color_primary, item.pattern, item.subcategory ?? item.category]
-    .filter(Boolean)
-    .join(" ");
+  return describeGarment(item);
 }

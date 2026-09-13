@@ -1,17 +1,11 @@
 {
   "outfit": {
-    "item_ids": [
-      "own-top",
-      "own-bottom",
-      "own-bottom"
-    ],
+    "item_ids": ["own-top", "own-bottom", "own-bottom"],
     "name": "Twice Over",
     "occasion": "everyday",
     "match_score": 90
   },
-  "rationale": [
-    "The trouser repeats for balance."
-  ],
+  "rationale": ["The trouser repeats for balance."],
   "confidence": 0.86,
   "degradation_level": 1
 }

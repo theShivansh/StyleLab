@@ -13,6 +13,8 @@ Three things this reaches that a route test cannot:
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app.db.session import build_engine, create_all, session_factory
@@ -20,6 +22,7 @@ from app.domain.models import AdviceRequest, ItemStatus, Outfit, OutfitAdvice
 from app.domain.models import GarmentCategory as C
 from app.domain.scoring import match_score
 from app.repositories.wardrobe import WardrobeRepository
+from app.services.circuit import LatencyCircuit
 from app.services.compose import OutfitComposer, SwapNotPossibleError, _apply_swap
 from app.services.composition import CompositionService
 from app.services.jobs import (
@@ -110,12 +113,21 @@ def outfit_advice(*item_ids: str) -> OutfitAdvice:
     )
 
 
-def composer_for(sessions, advisor, *, jobs: InMemoryJobStore | None = None) -> OutfitComposer:
+def composer_for(
+    sessions,
+    advisor,
+    *,
+    jobs: InMemoryJobStore | None = None,
+    latency_budget_s: float | None = None,
+    circuit: LatencyCircuit | None = None,
+) -> OutfitComposer:
     return OutfitComposer(
         sessions=sessions,
         advisor=advisor,
         jobs=jobs or InMemoryJobStore(),
         background=BackgroundJobs(),
+        latency_budget_s=latency_budget_s,
+        circuit=circuit,
     )
 
 
@@ -385,3 +397,49 @@ async def test_an_unknown_role_is_refused_rather_than_guessed(wardrobe, stubs):
         await composer.alternatives(U1, "o1", role="hat")
 
     assert raised.value.code == "UNKNOWN_ROLE"
+
+
+async def test_an_advisor_timeout_opens_the_circuit_on_the_first_one(wardrobe):
+    """The wiring behind `LatencyCircuit.trip`, which the unit test cannot reach.
+
+    Found by composing in a browser rather than by reading the code. The advisor exceeded the
+    budget, the composition fell to the deterministic ranker (rung 4), and the breaker
+    recorded a single breach — so the *next* compose would take the full budget and fall to
+    the ranker again before the reduced crew (rung 3) was ever reached. Two full timeouts to
+    arrive at a rung the first one was already evidence for.
+
+    Asserted on the breaker rather than on the advice, because the advice is identical either
+    way: rung 4 is the correct answer for this composition. What changes is the rung the
+    *next* one starts from.
+    """
+
+    class SleepingAdvisor:
+        async def advise(self, request):
+            await asyncio.sleep(5)
+            raise AssertionError("the budget should have cancelled this")
+
+    circuit = LatencyCircuit(budget_s=10.0)
+    composer = composer_for(
+        wardrobe, SleepingAdvisor(), latency_budget_s=0.02, circuit=circuit
+    )
+
+    await composer.run(U1, await queued(composer), occasion="everyday")
+
+    assert circuit.tripped is True
+
+
+async def test_a_merely_slow_advisor_still_needs_two_breaches(wardrobe, stubs):
+    """The rule the breaker was written about is intact.
+
+    One slow compose is a slow compose. Only a cancellation — a total failure to deliver
+    inside the budget — is treated as sufficient on its own.
+    """
+    circuit = LatencyCircuit(budget_s=0.0)  # every run "breaches"
+    composer = composer_for(
+        wardrobe, stubs.ScriptedAdvisor(outfit_advice("top-1", "bottom-1", "shoe-1")),
+        circuit=circuit,
+    )
+
+    await composer.run(U1, await queued(composer, "job_a"), occasion="everyday")
+
+    assert circuit.tripped is False

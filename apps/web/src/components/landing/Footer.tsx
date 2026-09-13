@@ -13,8 +13,8 @@ export function Footer() {
           STYLELAB <span aria-hidden="true">✦</span> — an independent portfolio project.
         </p>
         <p className="text-ink-muted/70 max-w-[52ch] text-xs">
-          Not affiliated with any retailer or brand. Nothing here is for sale, and no garment
-          shown is offered for purchase.
+          Not affiliated with any retailer or brand. Nothing here is for sale, and no garment shown
+          is offered for purchase.
         </p>
       </div>
     </footer>

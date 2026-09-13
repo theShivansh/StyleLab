@@ -93,7 +93,9 @@ export function UploadQueue({
                 </div>
 
                 <div className="mt-3 flex items-center gap-2">
-                  <Chip tone={failed ? "hedged" : entry.state === "ready" ? "confident" : "neutral"}>
+                  <Chip
+                    tone={failed ? "hedged" : entry.state === "ready" ? "confident" : "neutral"}
+                  >
                     {(busy && entry.stage) || STAGE_COPY[entry.state]}
                   </Chip>
                   {busy && (

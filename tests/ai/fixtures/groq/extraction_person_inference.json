@@ -7,17 +7,9 @@
   "material_guess": "silk",
   "fit": "fitted",
   "formality": "smart-casual",
-  "season_tags": [
-    "summer"
-  ],
-  "occasion_tags": [
-    "work"
-  ],
-  "style_tags": [
-    "feminine",
-    "suits her figure",
-    "size 8, approximately 5 foot 6"
-  ],
+  "season_tags": ["summer"],
+  "occasion_tags": ["work"],
+  "style_tags": ["feminine", "suits her figure", "size 8, approximately 5 foot 6"],
   "field_confidence": {
     "category": 0.91,
     "color_primary": 0.88

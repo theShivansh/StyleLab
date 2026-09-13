@@ -29,13 +29,36 @@ python -m venv .venv
 Checks — the same set CI runs:
 
 ```bash
+pnpm format:check             # scoped to code; the prose specs are hand-wrapped
 pnpm check                    # lint + typecheck + unit + build
 pnpm --filter web test:e2e    # needs: pnpm exec playwright install chromium
-./.venv/Scripts/python -m ruff check apps/api
+./.venv/Scripts/python -m ruff check apps/api tests
 ./.venv/Scripts/python -m pytest apps/api/tests -q
+GROQ_API_KEY= ./.venv/Scripts/python -m pytest tests/ai -q   # grounding, with no key
 ```
 
 Python is pinned to **3.11** in both CI and local (`docs/DECISIONS.md`).
+
+### The wardrobe lives in a database, and the database has migrations
+
+```bash
+cd apps/api && alembic upgrade head
+```
+
+Locally you can skip it: `APP_ENV` defaults to `local`, where `create_all` builds the schema
+on boot. You cannot skip it in a deployment, and boot will tell you so — S11 added a check
+that refuses to serve against a database that does not match the models, because
+`create_all` adds missing *tables* and never missing *columns*, so a database that is merely
+behind stays silently wrong until a query touches it.
+
+If you have a database from before S11, it is not described by any revision. Delete
+`stylelab.db` and start again, or add the missing column by hand and `alembic stamp head`.
+
+### Deploying
+
+Read `docs/DEPLOYMENT.md` first. The short version: set `APP_ENV=production` and the
+application will tell you, in one message, every setting still holding a local default that
+would be wrong in a container.
 
 ### Core loop
 

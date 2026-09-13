@@ -25,7 +25,15 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Request
 
 from app.config import get_settings
-from app.deps import OUTFIT_NOT_FOUND, Composer, CurrentUser, FaultError, Signer
+from app.deps import (
+    OUTFIT_NOT_FOUND,
+    Composer,
+    CurrentUser,
+    FaultError,
+    Rates,
+    Signer,
+    enforce,
+)
 from app.domain.compatibility import CORE_ROLES
 from app.domain.models import GarmentCategory
 from app.routers.serialization import alternatives_payload, job_payload, outfit_payload
@@ -80,6 +88,7 @@ def _swap_fault(error: SwapNotPossibleError) -> FaultError:
 async def compose(
     user_id: CurrentUser,
     composer: Composer,
+    rates: Rates,
     body: Annotated[dict[str, Any] | None, Body()] = None,
 ) -> dict[str, Any]:
     """Start a composition. 202 and a job — nothing has reached a model yet.
@@ -88,6 +97,11 @@ async def compose(
     Protocol in S8b and takes longer; a route that blocked now would have to change then,
     and every client written against it with it.
     """
+    # The most expensive thing the product does: six agents, ~7,600 input tokens, against
+    # an account measured at 8,000 per minute (blocker B17). Limited before the job is
+    # created, so a refusal costs a 429 rather than a queued crew run.
+    enforce(rates.compositions, user_id)
+
     payload = body or {}
     occasion = _text(payload.get("occasion"), limit=32) or "everyday"
     colors = payload.get("color_preferences")

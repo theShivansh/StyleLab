@@ -24,6 +24,7 @@ from app.services.compose import OutfitComposer
 from app.services.faults import Fault
 from app.services.ingest import WardrobeIngestService
 from app.services.jobs import InMemoryJobStore
+from app.services.ratelimit import Limits, RateLimiter
 from app.services.storage import ObjectStore
 
 
@@ -51,6 +52,50 @@ NO_SESSION = Fault(
 OUTFIT_NOT_FOUND = Fault(
     "ITEM_NOT_FOUND", "We couldn't find that look.", retryable=False, status=404
 )
+
+
+def rate_limited(retry_after_s: int) -> Fault:
+    """429, and a number the client can act on.
+
+    One message for every limit. A caller learning *which* quota it hit learns the shape of
+    our provider spend, and a real user only ever needs to know to wait — which the message
+    says, in the one place a user might actually be reading it.
+    """
+    return Fault(
+        "RATE_LIMITED",
+        "That's a lot at once. Give it a minute and try again.",
+        retryable=True,
+        status=429,
+        retry_after_s=retry_after_s,
+    )
+
+
+def enforce(limiter: RateLimiter, key: str, *, cost: float = 1.0) -> None:
+    """Spend `cost` against `key`, or raise the 429.
+
+    A function rather than a FastAPI dependency because the cost is not known until the
+    request body has been read — an upload of twelve photographs costs twelve, and a
+    dependency runs before anyone has counted them.
+    """
+    decision = limiter.check(key, cost=cost)
+    if not decision.allowed:
+        raise FaultError(rate_limited(decision.retry_after_s))
+
+
+def client_key(request: Request) -> str:
+    """Who to charge when there is no user yet.
+
+    Only `POST /session` needs this, and only because there is no account to throttle
+    instead (blocker B15). `request.client.host` is the socket peer: behind a proxy that is
+    the proxy unless uvicorn is run with `--proxy-headers --forwarded-allow-ips=...`.
+    Reading `X-Forwarded-For` here instead would be a limiter an attacker turns off by
+    setting a header, which is worse than none because it looks like protection.
+    """
+    return request.client.host if request.client else "unknown"
+
+
+def limits(request: Request) -> Limits:
+    return request.app.state.limits
 
 
 def signer(request: Request) -> TokenSigner:
@@ -95,6 +140,8 @@ def current_user(
 
 
 CurrentUser = Annotated[str, Depends(current_user)]
+ClientKey = Annotated[str, Depends(client_key)]
+Rates = Annotated[Limits, Depends(limits)]
 Composer = Annotated[OutfitComposer, Depends(composer)]
 Sessions = Annotated["sessionmaker[Session]", Depends(sessions)]
 Ingest = Annotated[WardrobeIngestService, Depends(ingest)]
@@ -107,18 +154,24 @@ __all__ = [
     "NOT_FOUND",
     "NO_SESSION",
     "OUTFIT_NOT_FOUND",
+    "ClientKey",
     "Composer",
     "CurrentUser",
     "FaultError",
     "Ingest",
     "Jobs",
+    "Rates",
     "Sessions",
     "Signer",
     "Store",
+    "client_key",
     "composer",
     "current_user",
+    "enforce",
     "ingest",
     "jobs",
+    "limits",
+    "rate_limited",
     "sessions",
     "signer",
     "store",

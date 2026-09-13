@@ -1,17 +1,11 @@
 {
   "outfit": {
-    "item_ids": [
-      "own-top",
-      "own-bottom",
-      "own-shoe"
-    ],
+    "item_ids": ["own-top", "own-bottom", "own-shoe"],
     "name": "Quiet Navy",
     "occasion": "everyday",
     "match_score": 86
   },
-  "rationale": [
-    "Neutral through."
-  ],
+  "rationale": ["Neutral through."],
   "confidence": 0.8,
   "trend_notes": [
     {
@@ -19,27 +13,21 @@
       "source": "example-publication",
       "published_at": "2026-07-14",
       "url": "https://example-publication.test/wide-leg",
-      "applies_to_items": [
-        "not-owned"
-      ]
+      "applies_to_items": ["not-owned"]
     },
     {
       "trend": "Neutral palettes holding through AW26",
       "source": "example-publication",
       "published_at": "2026-08-02",
       "url": "https://example-publication.test/neutral-palettes",
-      "applies_to_items": [
-        "own-top"
-      ]
+      "applies_to_items": ["own-top"]
     },
     {
       "trend": "Chrome is the colour of the season",
       "source": "A Real Magazine",
       "published_at": "2026-08-20",
       "url": "https://magazine.test/chrome",
-      "applies_to_items": [
-        "own-top"
-      ]
+      "applies_to_items": ["own-top"]
     }
   ],
   "degradation_level": 1

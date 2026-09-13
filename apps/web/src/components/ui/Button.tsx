@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
  * here rather than left to each caller.
  */
 
-type Variant = "primary" | "secondary" | "ghost";
+type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "md" | "lg";
 
 const base = cn(
@@ -36,6 +36,15 @@ const variants: Record<Variant, string> = {
     "hover:border-border-strong hover:bg-surface-muted",
   ),
   ghost: cn("bg-transparent text-ink-muted", "hover:bg-surface-muted hover:text-ink"),
+  // Added in S11 for "delete my whole wardrobe", and the only destructive control in the
+  // product. Uses the `--color-danger` token the design system has carried since S2 rather
+  // than a new red: an irreversible action should look different from the primary action,
+  // and it should not look like a different product.
+  danger: cn(
+    "bg-[var(--color-danger)] text-white",
+    "hover:brightness-110",
+    "shadow-[var(--shadow-raised)]",
+  ),
 };
 
 const sizes: Record<Size, string> = {
@@ -56,7 +65,9 @@ export function Button({
   type = "button",
   ...rest
 }: Shared & ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button type={type} className={cn(base, variants[variant], sizes[size], className)} {...rest} />;
+  return (
+    <button type={type} className={cn(base, variants[variant], sizes[size], className)} {...rest} />
+  );
 }
 
 export function ButtonLink({

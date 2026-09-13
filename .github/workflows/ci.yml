@@ -21,6 +21,11 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: lts/*, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # Added in S11. The prompt for every phase has listed formatting first and nobody had
+      # ever run it: 33 source files had drifted by the time anyone looked. A formatter is
+      # only worth having if it is a gate — otherwise it is a suggestion that loses.
+      # Scoped by .prettierignore to code; the prose specs are hand-wrapped and excluded.
+      - run: pnpm format:check
       - run: pnpm --filter web lint
       - run: pnpm --filter web typecheck
       - run: pnpm --filter web test:unit

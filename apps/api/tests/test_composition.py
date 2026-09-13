@@ -102,12 +102,27 @@ async def test_a_provider_failure_degrades_to_the_ranker_not_to_an_error(repo, s
 
 async def test_degradation_is_disclosed_rather_than_hidden(repo, stubs):
     """Case 23: "an honest note about reduced depth". A silently shallower answer that looks
-    identical to a full one is the thing this project exists not to ship."""
+    identical to a full one is the thing this project exists not to ship.
+
+    **The disclosure moved in S11, and the requirement did not.** This test used to look for
+    the words in `rationale`, where the ranker wrote a sentence of its own. The result screen
+    was therefore saying it twice, in two wordings, stacked — once from here and once from
+    the client's `degradation_level` footer, which covers every rung rather than only this
+    one.
+
+    So the assertion follows the signal to the field that is typed for it. The rendering half
+    is held by `apps/web/e2e/outfit.spec.ts` — *"a degraded look discloses its depth once, not
+    twice"* — because whether a user is told is a fact about a screen, and asserting it
+    against a string in a list here was always a proxy for that.
+    """
     advice = await CompositionService(repo, advisor=stubs.FailingAdvisor()).compose(
         U1, occasion="everyday"
     )
+
     assert advice.degradation_level > 1
-    assert any("without" in r.lower() or "reduced" in r.lower() for r in advice.rationale)
+    # And the rationale still explains the *outfit*, which is what a rationale is for.
+    assert advice.rationale
+    assert not any("advisory crew" in line.lower() for line in advice.rationale)
 
 
 async def test_an_insufficient_wardrobe_names_the_gap_and_stops(session, stubs):

@@ -22,6 +22,17 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    #: Which environment this is. Every other default in this file leans toward *a fresh
+    #: clone runs*, and `app/preflight.py` is the one place that knows those accommodations
+    #: are wrong in a deployment. `local` keeps them and warns; `production` refuses to boot
+    #: on the ones that make the application incorrect rather than merely worse.
+    #:
+    #: Default `local` on purpose. A default of `production` would make a fresh clone fail
+    #: on three settings nobody has heard of yet; the cost of this direction is one
+    #: environment variable in a deploy config, which is the one place somebody is already
+    #: setting environment variables.
+    app_env: Literal["local", "production"] = "local"
+
     # --- Groq. Required; see docs/DECISIONS.md (B5) for the model choice. ---
     groq_api_key: str = Field(min_length=1)
     groq_text_model: str = "openai/gpt-oss-120b"
@@ -95,6 +106,23 @@ class Settings(BaseSettings):
     #: The provider gets a downscaled copy, not the stored original: a 4000px photograph of a
     #: shirt carries no more garment information than a 1024px one, and costs more to send.
     analysis_max_edge_px: int = 1024
+
+    # --- Rate limits (docs/SECURITY-PRIVACY.md, "rate limiting on upload and extraction") ---
+    #: One window for all three quotas. Fifteen minutes is long enough that a real session —
+    #: upload a batch, correct a few fields, compose, swap, compose again — never touches a
+    #: limit, and short enough that a throttled client recovers within a coffee.
+    rate_limit_window_s: float = 15 * 60
+    #: **Images**, not requests. One POST carrying twelve photographs is twelve provider
+    #: calls, so the bucket is spent per image (`app/services/ratelimit.py`). 24 is two full
+    #: batches at the documented `max_images_per_batch`.
+    rate_limit_images: float = 24
+    #: Compositions. Each one is a six-agent crew run — the single most expensive thing the
+    #: product does, and the one blocker B17 says the account cannot sustain anyway.
+    rate_limit_composes: float = 12
+    #: New anonymous sessions, per client address. There is no signup to throttle instead
+    #: (blocker B15), so this is the only thing standing between a public URL and an
+    #: unlimited supply of identities that can each spend the quotas above.
+    rate_limit_sessions: float = 10
 
     # --- Storage / persistence ---
     #: Read as configured, which may be blank: `.env.example` ships the key with no value,

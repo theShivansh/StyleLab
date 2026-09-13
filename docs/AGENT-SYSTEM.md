@@ -62,6 +62,17 @@ makes this shape viable; do not port it to a slower provider without re-measurin
 Consecutive breaches, not two breaches: one slow compose is a slow compose, and a breaker that
 trips on a single one makes the product visibly shallower for no reason a user can see.
 
+**A timeout is not a breach, and opens the breaker on its own (S11).** The distinction was
+found by composing in a browser rather than by reading this paragraph. A breach is a
+measurement — the advisor answered, and took too long. A timeout is a failure to answer at
+all: the call is cancelled at the budget and the whole of it is spent for nothing. Requiring
+two of those in a row made rung 3 unreachable in exactly the conditions it exists for. The
+observed sequence was fifteen seconds to the deterministic ranker, fifteen more to the ranker
+again, and only then the reduced crew that takes about four — thirty seconds of a user's time
+to arrive at a rung the first timeout was already sufficient evidence for.
+
+Recovery is unchanged: one run inside budget closes it, whichever way it opened.
+
 **Style Profiler output is cached.** A user's aesthetic changes far more slowly than their
 outfit request. Invalidate on wardrobe change, not per request.
 

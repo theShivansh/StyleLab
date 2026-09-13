@@ -92,7 +92,13 @@ async function stubHappyPath(page: Page, count = 2) {
 
   await page.route("**/api/v1/jobs/*", (route) =>
     route.fulfill({
-      json: { job_id: "job_1", type: "analyze_item", status: "completed", stage: null, progress: 1 },
+      json: {
+        job_id: "job_1",
+        type: "analyze_item",
+        status: "completed",
+        stage: null,
+        progress: 1,
+      },
     }),
   );
 
@@ -150,7 +156,9 @@ test("@critical a refused photo costs one card, not the batch", async ({ page })
   await expect(cards).toHaveCount(2, { timeout: 15_000 });
 });
 
-test("@critical a low-confidence field is hedged, and correcting it settles it", async ({ page }) => {
+test("@critical a low-confidence field is hedged, and correcting it settles it", async ({
+  page,
+}) => {
   await stubHappyPath(page, 1);
   await page.goto("/wardrobe");
   await pick(page, [{ name: "shirt.png", mimeType: "image/png", buffer: PNG }]);
@@ -192,7 +200,13 @@ test("the material reads as a guess even when the model is certain", async ({ pa
   });
   await page.route("**/api/v1/jobs/*", (route) =>
     route.fulfill({
-      json: { job_id: "job_1", type: "analyze_item", status: "completed", stage: null, progress: 1 },
+      json: {
+        job_id: "job_1",
+        type: "analyze_item",
+        status: "completed",
+        stage: null,
+        progress: 1,
+      },
     }),
   );
   await page.route("**/api/v1/wardrobe/items/*", async (route) => {
@@ -279,7 +293,11 @@ test("upload failure is reported per card, not as a page-level dead end", async 
     route.fulfill({
       status: 503,
       json: {
-        error: { code: "AI_UNAVAILABLE", message: "ignored in favour of our own copy", retryable: true },
+        error: {
+          code: "AI_UNAVAILABLE",
+          message: "ignored in favour of our own copy",
+          retryable: true,
+        },
       },
     }),
   );
@@ -321,9 +339,7 @@ test("@critical the card names the work the server is actually doing", async ({ 
     if (route.request().method() !== "POST") return route.fallback();
     await route.fulfill({
       json: {
-        items: [
-          { item_id: "item_1", asset_id: "asset_1", job_id: "job_1", status: "analyzing" },
-        ],
+        items: [{ item_id: "item_1", asset_id: "asset_1", job_id: "job_1", status: "analyzing" }],
       },
     });
   });
@@ -384,12 +400,24 @@ test("@critical a failed photo offers a retry that re-reads only that photo", as
   );
   await page.route("**/api/v1/jobs/job_ok", (route) =>
     route.fulfill({
-      json: { job_id: "job_ok", type: "analyze_item", status: "completed", stage: "ready", progress: 1 },
+      json: {
+        job_id: "job_ok",
+        type: "analyze_item",
+        status: "completed",
+        stage: "ready",
+        progress: 1,
+      },
     }),
   );
   await page.route("**/api/v1/jobs/job_retry", (route) =>
     route.fulfill({
-      json: { job_id: "job_retry", type: "analyze_item", status: "completed", stage: "ready", progress: 1 },
+      json: {
+        job_id: "job_retry",
+        type: "analyze_item",
+        status: "completed",
+        stage: "ready",
+        progress: 1,
+      },
     }),
   );
 
@@ -425,4 +453,66 @@ test("@critical a failed photo offers a retry that re-reads only that photo", as
   await expect(page.getByRole("button", { name: "Read it again" })).toHaveCount(0);
   expect(reanalyzed).toHaveLength(1);
   expect(reanalyzed[0]).toContain("item_1");
+});
+
+test("@critical the whole wardrobe can be removed in one action, and the copy says what that means", async ({
+  page,
+}) => {
+  // docs/SECURITY-PRIVACY.md has asked for this since S0. Until S11 the only deletion was
+  // per garment, so exercising the right meant one tap per photograph and hoping none was
+  // missed — while the landing page said "Remove one garment or the whole wardrobe".
+  let cleared = false;
+  await page.route("**/api/v1/wardrobe/items", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    cleared = true;
+    await route.fulfill({
+      json: {
+        deleted: true,
+        items: 1,
+        assets: 1,
+        affected_outfits: 0,
+        images_erased_after_days: 30,
+      },
+    });
+  });
+
+  await stubHappyPath(page, 1);
+  await page.goto("/wardrobe");
+  await pick(page, [{ name: "shirt.png", mimeType: "image/png", buffer: PNG }]);
+  await expect(page.locator('section[aria-label="Wardrobe"] li')).toHaveCount(1, {
+    timeout: 15_000,
+  });
+
+  // Two taps, not one, and not a `window.confirm` — the native dialog cannot say the thing
+  // this confirmation exists to say.
+  await page.getByRole("button", { name: "Delete my whole wardrobe" }).click();
+  await expect(page.getByText(/erased from storage within 30 days/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Keep my wardrobe" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Yes, delete everything" }).click();
+
+  await expect(page.locator('section[aria-label="Wardrobe"] li')).toHaveCount(0);
+  expect(cleared).toBe(true);
+});
+
+test("backing out of clearing the wardrobe leaves it alone", async ({ page }) => {
+  let called = false;
+  await page.route("**/api/v1/wardrobe/items", async (route) => {
+    if (route.request().method() !== "DELETE") return route.fallback();
+    called = true;
+    await route.fulfill({ json: { deleted: true, items: 0, assets: 0, affected_outfits: 0 } });
+  });
+
+  await stubHappyPath(page, 1);
+  await page.goto("/wardrobe");
+  await pick(page, [{ name: "shirt.png", mimeType: "image/png", buffer: PNG }]);
+  await expect(page.locator('section[aria-label="Wardrobe"] li')).toHaveCount(1, {
+    timeout: 15_000,
+  });
+
+  await page.getByRole("button", { name: "Delete my whole wardrobe" }).click();
+  await page.getByRole("button", { name: "Keep my wardrobe" }).click();
+
+  await expect(page.locator('section[aria-label="Wardrobe"] li')).toHaveCount(1);
+  expect(called).toBe(false);
 });

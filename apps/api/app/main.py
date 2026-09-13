@@ -33,6 +33,8 @@ expose one, and a handler is the only way to mean it.
 from __future__ import annotations
 
 import logging
+import re
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -50,6 +52,7 @@ from app.config import get_settings
 from app.db.session import create_all, get_engine, session_factory
 from app.deps import FaultError
 from app.logging_setup import install_log_redaction
+from app.preflight import log_findings, verify_deployment, verify_schema
 from app.routers import assets as assets_router
 from app.routers import jobs as jobs_router
 from app.routers import outfits as outfits_router
@@ -59,6 +62,8 @@ from app.security.tokens import TokenSigner
 from app.services.compose import OutfitComposer
 from app.services.ingest import UploadLimits, WardrobeIngestService
 from app.services.jobs import BackgroundJobs, InMemoryJobStore
+from app.services.ratelimit import Limits
+from app.services.retention import RetentionSweeper
 from app.services.storage import InlineImageSource, LocalObjectStore, ObjectStore
 from app.services.telemetry import LoggingGenerationLog, LoggingTrendLog
 
@@ -126,8 +131,13 @@ def create_app(
         # Before the first request is served: the access log would otherwise record a
         # working link to a user's photograph on every image the wardrobe renders.
         install_log_redaction()
+        # Before the provider check, because this one costs nothing and catches the errors
+        # an operator can actually fix. Raises in production when a local default survived
+        # into a deployment; warns about all of them either way.
+        log_findings(verify_deployment(settings))
         logger.info(
-            "stylelab api starting: text=%s vision=%s fallback=%s trends=%s",
+            "stylelab api starting: env=%s text=%s vision=%s fallback=%s trends=%s",
+            settings.app_env,
             settings.groq_text_model,
             settings.groq_vision_model,
             settings.groq_vision_fallback_model,
@@ -150,10 +160,24 @@ def create_app(
             # goes to a log (docs/SECURITY-PRIVACY.md — never log secrets). Logged at all
             # because the local default is only acceptable while it is visible.
             logger.info("wardrobe store: %s", engine.dialect.name)
-            # Not a migration strategy — blocker B12. Enough for local work, and it means a
-            # fresh clone has somewhere to put a wardrobe rather than failing on the first
-            # insert with a message about a missing table.
-            create_all(engine)
+            if settings.app_env == "production":
+                # Migrations own the schema here (blocker B12, closed in S11). `create_all`
+                # would be actively harmful: it creates whatever is missing, which quietly
+                # papers over a migration that did not run and leaves the database in a
+                # state no revision describes. `alembic upgrade head` is a deploy step, and
+                # a deploy step that failed should look like a failed deploy.
+                logger.info("schema: managed by alembic (run `alembic upgrade head`)")
+            else:
+                # Local and test only. It means a fresh clone has somewhere to put a
+                # wardrobe rather than failing on the first insert with a message about a
+                # missing table.
+                create_all(engine)
+
+            # After create_all, because create_all is what makes a fresh clone correct — and
+            # is also what cannot fix a database that is merely *behind*. It adds missing
+            # tables and never missing columns, so a database created before a column was
+            # added stays silently wrong until a query touches it.
+            verify_schema(engine)
             app.state.engine = engine
             app.state.sessions = session_factory(engine)
 
@@ -161,6 +185,10 @@ def create_app(
 
         app.state.jobs = InMemoryJobStore()
         app.state.background = BackgroundJobs()
+        # Per instance, not per deployment (docs/SECURITY-PRIVACY.md, and the note in
+        # app/services/ratelimit.py). Built here with everything else so a test can reach in
+        # and exhaust a bucket without waiting fifteen minutes for one to refill.
+        app.state.limits = Limits.from_settings(settings)
         # One sink for both generating paths, so `success_rate` means the same thing on
         # each of them (docs/OBSERVABILITY.md, and `app/services/telemetry.py` on why the
         # rollup is product code rather than a query somebody writes later).
@@ -189,6 +217,13 @@ def create_app(
                 max_pixels=settings.max_image_pixels,
             ),
         )
+
+        # Blocker B16, closed here. Soft deletion stops a photograph being served; this is
+        # what eventually makes it stop existing. Started after the store is built and
+        # stopped in the shutdown below, so a test gets a deterministic app with no timer
+        # firing underneath it.
+        app.state.retention = RetentionSweeper(app.state.sessions, app.state.store)
+        app.state.retention.start()
 
         app.state.trend_log = LoggingTrendLog()
         app.state.trends = _trend_source(settings, app.state.trend_log)
@@ -220,6 +255,7 @@ def create_app(
 
         yield
 
+        await app.state.retention.stop()
         # Let outstanding extractions finish rather than cutting them mid-provider-call: a
         # job killed after the model answered and before the row was written costs the user
         # a card and costs us the call.
@@ -243,11 +279,41 @@ def create_app(
         allow_headers=["Authorization", "Content-Type"],
     )
 
+    @app.middleware("http")
+    async def _request_id(request: Request, call_next):
+        """Stamp every response with an id, and put it where an error handler can find it.
+
+        docs/API-SPEC.md has carried `request_id` in the error envelope since S0 and nothing
+        ever set one, so the field was documentation of an intention. It is worth having for
+        one specific reason: the user-facing messages in `app/services/faults.py` are
+        deliberately vague — they never quote a provider and never say which quota was hit —
+        which means a user reporting a problem has nothing to give support but the time of
+        day. An id they can read off the screen is the thing that connects their sentence to
+        our log line.
+
+        Accepted from the caller when supplied, so a trace started at the web tier keeps one
+        id end to end. Bounded and filtered on the way in: it is echoed in a response header
+        and into logs, and an unvalidated header that reaches both is a header-injection and
+        log-forging primitive.
+        """
+        supplied = request.headers.get("x-request-id", "")
+        request_id = supplied if _usable_request_id(supplied) else f"req_{uuid.uuid4().hex[:16]}"
+        request.state.request_id = request_id
+
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     @app.exception_handler(FaultError)
-    async def _fault(_: Request, error: FaultError) -> JSONResponse:
+    async def _fault(request: Request, error: FaultError) -> JSONResponse:
         fault = error.fault
         return error_response(
-            fault.code, fault.message, retryable=fault.retryable, status=fault.status
+            fault.code,
+            fault.message,
+            retryable=fault.retryable,
+            status=fault.status,
+            request_id=getattr(request.state, "request_id", None),
+            retry_after_s=fault.retry_after_s,
         )
 
     @app.exception_handler(Exception)
@@ -258,12 +324,16 @@ def create_app(
         expose a stack trace — and the only way to hold that for the unexpected case is to
         have a handler for it.
         """
-        logger.exception("unhandled error", extra={"path": request.url.path})
+        request_id = getattr(request.state, "request_id", None)
+        logger.exception(
+            "unhandled error", extra={"path": request.url.path, "request_id": request_id}
+        )
         return error_response(
             "AI_UNAVAILABLE",
             "Something went wrong on our side. Try again in a moment.",
             retryable=True,
             status=500,
+            request_id=request_id,
         )
 
     @app.get("/health")
@@ -288,16 +358,34 @@ def create_app(
 app = create_app()
 
 
+#: A caller-supplied request id is echoed back and written to logs, so it is filtered to
+#: characters that cannot forge a header or a log line. Anything else gets ours instead —
+#: refusing the request would be a 400 for a field nobody has to send.
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+
+
+def _usable_request_id(value: str) -> bool:
+    return bool(_REQUEST_ID.match(value))
+
+
 def error_response(
-    code: str, message: str, *, retryable: bool, status: int, request_id: str | None = None
+    code: str,
+    message: str,
+    *,
+    retryable: bool,
+    status: int,
+    request_id: str | None = None,
+    retry_after_s: int | None = None,
 ) -> JSONResponse:
     """The single error envelope from docs/API-SPEC.md.
 
     Never expose a stack trace or a raw provider message (docs/SECURITY-PRIVACY.md).
     `ProviderError.code` and `.message` are already sanitised for exactly this use.
     """
+    headers = {"Retry-After": str(retry_after_s)} if retry_after_s else None
     return JSONResponse(
         status_code=status,
+        headers=headers,
         content={
             "error": {
                 "code": code,

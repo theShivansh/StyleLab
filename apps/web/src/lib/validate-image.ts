@@ -22,7 +22,11 @@ export interface Rejection {
 
 const ACCEPTED = new Set<string>(config.upload.acceptedMimeTypes);
 
-export function validateImageFile(file: { name: string; size: number; type: string }): Rejection | null {
+export function validateImageFile(file: {
+  name: string;
+  size: number;
+  type: string;
+}): Rejection | null {
   if (file.size === 0) {
     return { code: "EMPTY_FILE", message: "That file is empty. Try picking it again." };
   }

@@ -51,12 +51,20 @@ function outfitPayload(over: Record<string, unknown> = {}) {
       {
         role: "bottom",
         item_id: "item_bottom",
-        item: itemPayload("item_bottom", { category: "bottom", subcategory: "chino", color_primary: "stone" }),
+        item: itemPayload("item_bottom", {
+          category: "bottom",
+          subcategory: "chino",
+          color_primary: "stone",
+        }),
       },
       {
         role: "footwear",
         item_id: "item_shoe",
-        item: itemPayload("item_shoe", { category: "footwear", subcategory: "sneaker", color_primary: "white" }),
+        item: itemPayload("item_shoe", {
+          category: "footwear",
+          subcategory: "sneaker",
+          color_primary: "white",
+        }),
       },
     ],
     confidence: 0.84,
@@ -114,27 +122,27 @@ test("a trend claim is shown with its publication, its date and a link", async (
   // The trend layer's whole justification: this comes from a dated article rather than from
   // model recall, and the way a reader can tell is that they can go and read it. A claim
   // rendered without all three would be indistinguishable from one the model invented.
-  await stubOutfit(page, outfitPayload({
-    trend_notes: [
-      {
-        trend: "Relaxed tailoring is holding through AW26",
-        source: "example-publication",
-        published_at: "2026-08-02",
-        url: "https://example-publication.test/aw26-tailoring",
-        applies_to_items: ["item_top"],
-      },
-    ],
-  }));
+  await stubOutfit(
+    page,
+    outfitPayload({
+      trend_notes: [
+        {
+          trend: "Relaxed tailoring is holding through AW26",
+          source: "example-publication",
+          published_at: "2026-08-02",
+          url: "https://example-publication.test/aw26-tailoring",
+          applies_to_items: ["item_top"],
+        },
+      ],
+    }),
+  );
   await page.goto("/outfit/outfit_1");
 
   const section = page.locator("section, div").filter({ hasText: "What's current" }).last();
   await expect(page.getByText("Relaxed tailoring is holding through AW26")).toBeVisible();
 
   const citation = page.getByRole("link", { name: "example-publication" });
-  await expect(citation).toHaveAttribute(
-    "href",
-    "https://example-publication.test/aw26-tailoring",
-  );
+  await expect(citation).toHaveAttribute("href", "https://example-publication.test/aw26-tailoring");
   // Opens away from the app, and carries no referrer or ranking signal to the publisher.
   await expect(citation).toHaveAttribute("rel", /noopener/);
   await expect(citation).toHaveAttribute("rel", /nofollow/);
@@ -178,7 +186,11 @@ test("@critical swapping one slot changes that slot and leaves the others alone"
           {
             role: "bottom",
             item_id: "item_bottom",
-            item: itemPayload("item_bottom", { category: "bottom", subcategory: "chino", color_primary: "stone" }),
+            item: itemPayload("item_bottom", {
+              category: "bottom",
+              subcategory: "chino",
+              color_primary: "stone",
+            }),
           },
           {
             role: "footwear",
@@ -298,6 +310,27 @@ test("a degraded look says so rather than passing itself off as a full one", asy
   await expect(page.getByText(/ranker rather than the advisory crew/)).toBeVisible();
 });
 
+test("a degraded look discloses its depth once, not twice", async ({ page }) => {
+  // S11 found the result screen saying it in two wordings, stacked: the ranker had been
+  // appending a disclosure to `rationale` while the client rendered its own from
+  // `degradation_level`. Both were true and together they read as a stutter.
+  //
+  // Asserted as a count rather than as "the other sentence is absent", because the failure
+  // to guard against is a *second* disclosure appearing from anywhere, not that one
+  // particular sentence comes back.
+  await stubOutfit(
+    page,
+    outfitPayload({
+      degradation_level: 4,
+      rationale: ["The palette holds together.", "The volumes balance."],
+    }),
+  );
+  await page.goto("/outfit/outfit_1");
+
+  await expect(page.getByText(/reasoning is reduced, not the wardrobe/)).toHaveCount(1);
+  await expect(page.getByText(/advisory crew/)).toHaveCount(1);
+});
+
 test("composing shows the server's named stages, never a bare spinner", async ({ page }) => {
   await page.route("**/api/v1/wardrobe/items", async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
@@ -372,11 +405,7 @@ test("an insufficient wardrobe is named, not reported as a failure", async ({ pa
     if (route.request().method() !== "GET") return route.fallback();
     await route.fulfill({
       json: {
-        items: [
-          itemPayload("item_top"),
-          itemPayload("item_top2"),
-          itemPayload("item_top3"),
-        ],
+        items: [itemPayload("item_top"), itemPayload("item_top2"), itemPayload("item_top3")],
       },
     });
   });
@@ -387,6 +416,8 @@ test("an insufficient wardrobe is named, not reported as a failure", async ({ pa
 
   // Three tops and nothing else: the screen says which roles are empty before spending a
   // request, and offers the way to fix it.
-  await expect(page.getByRole("heading", { name: /You have no bottom or footwear yet/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /You have no bottom or footwear yet/ }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: /Add bottom or footwear/ })).toBeVisible();
 });

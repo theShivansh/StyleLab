@@ -208,3 +208,29 @@ def test_rationale_never_asserts_material_as_fact(g):
     joined = " ".join(advice.rationale).lower()
     if "wool" in joined:
         assert "looks like" in joined or "probabl" in joined or "guess" in joined
+
+
+def test_the_rationale_does_not_carry_the_degradation_disclosure(g):
+    """A rationale line explains the outfit. How deeply the pipeline reasoned is not one.
+
+    The ranker used to append `DEGRADED_NOTE` to `rationale`, and the web client separately
+    renders its own disclosure from `degradation_level`. S11 found the result screen saying
+    it twice, in two wordings, stacked — both true, and together a stutter.
+
+    Kept as a test rather than only a deletion because the note is a tempting thing to add
+    back: it reads like honesty, and it *is* honesty, in the wrong field. `degradation_level`
+    already carries it, for every rung of the ladder rather than only this one.
+    """
+    items = [
+        g("t", category=C.TOP),
+        g("b", category=C.BOTTOM),
+        g("s", category=C.FOOTWEAR),
+    ]
+
+    advice = DeterministicRanker().compose(request_for(items))
+
+    joined = " ".join(advice.rationale).lower()
+    assert "advisory crew" not in joined
+    assert "reasoning is reduced" not in joined
+    # The signal itself is still there, in the field that is typed for it.
+    assert advice.degradation_level >= 4
