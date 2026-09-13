@@ -191,14 +191,14 @@ def test_every_scenario_is_claimed_by_the_case_it_evidences():
 def test_the_status_counts_are_what_the_ledger_says():
     """A tripwire, not a tautology.
 
-    S8 leaves seven cases short of full coverage: six wait on the agent crew and one (09)
-    waits on a decision about free-text extraction fields, blocker B18. If that number
-    changes, docs/PROGRESS.md and the S8b plan are both stale, and this is the thing that
-    says so out loud rather than letting the drift sit.
+    S8b closed six of the seven the crew was blocking. What is left is Case 09, which is
+    `partial` pending a decision about free-text extraction fields (blocker B18). If this
+    number changes, docs/PROGRESS.md is stale, and this is the thing that says so out loud
+    rather than letting the drift sit.
     """
     counts = {
         status: sum(1 for case in CASES if case.status == status)
         for status in ("covered", "partial", "deferred")
     }
 
-    assert counts == {"covered": 18, "partial": 5, "deferred": 2}
+    assert counts == {"covered": 24, "partial": 1, "deferred": 0}

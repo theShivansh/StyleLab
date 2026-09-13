@@ -8,6 +8,16 @@ dependencies = [
     # tests/test_adapter_boundary.py. Floor rather than pin: Groq ships often and the
     # surface we use (chat.completions, models.list, the typed exceptions) is stable.
     "groq>=0.30",
+    # The agent framework, confined to app/adapters/crew*.py. Its LLM calls are routed
+    # through our own ChatTransport via `crewai.BaseLLM` rather than LiteLLM, so the crew is
+    # testable with no API key — see app/adapters/crew_llm.py for why that mattered enough
+    # to be worth a custom LLM class. Floor with a ceiling: CrewAI moves fast and BaseLLM's
+    # signature has changed within 1.x.
+    "crewai>=1.15,<2",
+    # Exa is reached over plain HTTP from app/adapters/exa_search.py — the endpoint is one
+    # POST and the SDK would buy a second opinion about what a timeout means. httpx was
+    # already here transitively; naming it makes the dependency honest.
+    "httpx>=0.27",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",

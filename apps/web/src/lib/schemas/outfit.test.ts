@@ -39,12 +39,13 @@ const look = {
 };
 
 describe("trend notes", () => {
-  it("accepts a note carrying source and date", () => {
+  it("accepts a note carrying source, date and link", () => {
     expect(
       trendNoteSchema.safeParse({
         trend: "Relaxed tailoring holding through AW26",
         source: "example-publication",
         published_at: "2026-07-14",
+        url: "https://example-publication.test/aw26-tailoring",
       }).success,
     ).toBe(true);
   });
@@ -56,6 +57,19 @@ describe("trend notes", () => {
       trendNoteSchema.safeParse({
         trend: "Wide legs are back",
         source: "",
+        published_at: "2026-07-14",
+        url: "https://example.test/a",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a note the reader could not check", () => {
+    // S8b: a source and a date with no link is a citation nobody can follow, which is what a
+    // model inventing one produces. The url is also the note's identity server-side.
+    expect(
+      trendNoteSchema.safeParse({
+        trend: "Wide legs are back",
+        source: "A Real Magazine",
         published_at: "2026-07-14",
       }).success,
     ).toBe(false);

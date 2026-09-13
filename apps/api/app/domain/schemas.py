@@ -145,9 +145,22 @@ def _confidence_schema() -> dict[str, Any]:
     }
 
 
-def _schema_for(model: type[BaseModel]) -> dict[str, Any]:
+def close_and_require(model: type[BaseModel]) -> dict[str, Any]:
+    """A Pydantic model as a schema a strict provider will accept.
+
+    Public because S8b needs it too: each agent in the crew declares an `output_pydantic`
+    model, and those have to be prepared exactly the way extraction and advice are — every
+    object closed, every property listed in `required`, optionality carried by the type.
+
+    Two ways of building a strict schema in one codebase is one too many, and the second one
+    is always the one that is subtly wrong.
+    """
     schema = model.model_json_schema(mode="serialization")
     return _require_all_properties(_close_objects(_inline_refs(schema)))
+
+
+def _schema_for(model: type[BaseModel]) -> dict[str, Any]:
+    return close_and_require(model)
 
 
 def _publish_vocabularies(schema: dict[str, Any]) -> dict[str, Any]:
@@ -273,6 +286,7 @@ __all__ = [
     "ADVICE_JSON_SCHEMA",
     "CONFIDENCE_FIELDS",
     "EXTRACTION_JSON_SCHEMA",
+    "close_and_require",
     "parse_advice",
     "parse_extraction",
 ]

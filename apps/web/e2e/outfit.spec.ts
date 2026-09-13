@@ -110,6 +110,37 @@ test("@critical the look renders from the user's own garments, with no price any
   }
 });
 
+test("a trend claim is shown with its publication, its date and a link", async ({ page }) => {
+  // The trend layer's whole justification: this comes from a dated article rather than from
+  // model recall, and the way a reader can tell is that they can go and read it. A claim
+  // rendered without all three would be indistinguishable from one the model invented.
+  await stubOutfit(page, outfitPayload({
+    trend_notes: [
+      {
+        trend: "Relaxed tailoring is holding through AW26",
+        source: "example-publication",
+        published_at: "2026-08-02",
+        url: "https://example-publication.test/aw26-tailoring",
+        applies_to_items: ["item_top"],
+      },
+    ],
+  }));
+  await page.goto("/outfit/outfit_1");
+
+  const section = page.locator("section, div").filter({ hasText: "What's current" }).last();
+  await expect(page.getByText("Relaxed tailoring is holding through AW26")).toBeVisible();
+
+  const citation = page.getByRole("link", { name: "example-publication" });
+  await expect(citation).toHaveAttribute(
+    "href",
+    "https://example-publication.test/aw26-tailoring",
+  );
+  // Opens away from the app, and carries no referrer or ranking signal to the publisher.
+  await expect(citation).toHaveAttribute("rel", /noopener/);
+  await expect(citation).toHaveAttribute("rel", /nofollow/);
+  await expect(section).toContainText("2026");
+});
+
 test("@critical swapping one slot changes that slot and leaves the others alone", async ({
   page,
 }) => {

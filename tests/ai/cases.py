@@ -162,7 +162,11 @@ CASES: tuple[EvalCase, ...] = (
         "15",
         "Trend attribution",
         "covered",
-        ("apps/api/tests/test_domain_models.py", "apps/api/tests/test_output_schema.py"),
+        (
+            "apps/api/tests/test_domain_models.py",
+            "apps/api/tests/test_composition.py",
+            "apps/api/tests/test_exa_trends.py",
+        ),
     ),
     EvalCase(
         "16",
@@ -176,55 +180,37 @@ CASES: tuple[EvalCase, ...] = (
     ),
     EvalCase(
         "17",
-        "Stale trend corpus",
-        "deferred",
-        note=(
-            "No corpus exists (blocker B8), so there is nothing to be stale. The disclosure "
-            "half is already true — a missing trend source costs a rung and says so. S8b."
-        ),
+        "Stale trend data",
+        "covered",
+        ("apps/api/tests/test_exa_trends.py",),
     ),
     EvalCase(
         "18",
         "Injection via trend copy",
-        "partial",
-        (f"{S}::injected_rationale",),
-        note=(
-            "The defence is asserted — an instruction arriving inside model output is data, "
-            "and cannot widen retrieval scope. The specific channel, a hostile entry in the "
-            "trend corpus, needs the corpus (B8). S8b."
-        ),
+        "covered",
+        (f"{S}::injected_rationale", "apps/api/tests/test_exa_trends.py", "tests/ai/test_crew.py::test_case_19_an_upstream_agent_cannot_instruct_a_downstream_one"),
     ),
     EvalCase(
         "19",
         "Agent-to-agent injection",
-        "partial",
-        (f"{S}::injected_rationale", "apps/api/tests/test_prompt_contract.py"),
-        note=(
-            "There is one agent, so there is no downstream one to compromise. What holds "
-            "today is the property the crew will inherit: an upstream message is content. "
-            "S8b, with the Critic and the Editor."
+        "covered",
+        (
+            f"{S}::injected_rationale",
+            "apps/api/tests/test_prompt_contract.py",
+            "tests/ai/test_crew.py::test_case_19_an_upstream_agent_cannot_instruct_a_downstream_one",
         ),
     ),
     EvalCase(
         "20",
         "Crew output still fails ownership",
-        "partial",
-        (f"{S}::cross_user_item",),
-        note=(
-            "Case 11 pushed through the crew. The ownership check that must refuse it is "
-            "already outside the advisor and is exercised here; what is missing is the crew "
-            "in front of it. S8b."
+        "covered",
+        (
+            "tests/ai/test_crew.py::test_case_20_a_confident_crew_response_still_fails_ownership",
+            "tests/ai/test_crew_ladder.py",
+            f"{S}::cross_user_item",
         ),
     ),
-    EvalCase(
-        "21",
-        "Agent ablation",
-        "deferred",
-        note=(
-            "Needs the crew. Deliberately not stubbed: an ablation test that cannot fail is "
-            "worthless, and CI step `ai-eval` stays red until it exists (blocker B11). S8b."
-        ),
-    ),
+    EvalCase("21", "Agent ablation", "covered", ("tests/ai/test_ablation.py",)),
     EvalCase(
         "22",
         "Advisory safety",
@@ -234,12 +220,12 @@ CASES: tuple[EvalCase, ...] = (
     EvalCase(
         "23",
         "Latency circuit breaker",
-        "partial",
-        (f"{S}::latency_budget", "apps/api/tests/test_composition.py"),
-        note=(
-            "The floor holds: the budget expires, the call is cancelled, the ranker answers "
-            "and the depth is disclosed. The middle rung — degrade to Architect + Editor "
-            "before dropping to the ranker — needs a crew to have a middle. S8b."
+        "covered",
+        (
+            f"{S}::latency_budget",
+            "apps/api/tests/test_circuit.py",
+            "tests/ai/test_crew_ladder.py",
+            "apps/api/tests/test_composition.py",
         ),
     ),
     EvalCase(

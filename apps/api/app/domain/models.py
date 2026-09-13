@@ -88,11 +88,24 @@ class TrendQuery(Strict):
 
 
 class TrendNote(Strict):
-    """A trend claim. Unattributed notes are dropped, not rendered."""
+    """A trend claim. Unattributed notes are dropped, not rendered.
+
+    All three of `source`, `published_at` and `url` are required, and the requirement is the
+    product rule rather than a schema preference: a trend claim a reader cannot check is
+    indistinguishable from a model's training-data recall, which is the gimmick this project
+    exists to avoid (docs/AI-EVAL-CASES.md Case 15).
+
+    `url` is also the note's **identity**. Notes come from `TrendSource`, never from an
+    advisor's own knowledge, so `app.domain.validation` matches what the advisor returned
+    against what the source actually supplied — by URL. Without a stable identity that check
+    would have to compare prose, and an advisor that reworded a headline would lose its
+    citation.
+    """
 
     trend: str
     source: str = Field(min_length=1)
     published_at: date
+    url: str = Field(min_length=1)
     applies_to_items: list[str] = Field(default_factory=list)
 
 

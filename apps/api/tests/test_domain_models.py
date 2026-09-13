@@ -19,9 +19,25 @@ from app.domain.models import (
 
 
 def test_trend_note_requires_attribution():
-    """AI-EVAL-CASES Case 15: an unattributed trend claim is dropped, never rendered."""
+    """AI-EVAL-CASES Case 15: an unattributed trend claim is dropped, never rendered.
+
+    Three fields, not two. S8b added the URL, because a source and a date the reader cannot
+    follow are a citation they cannot check — and a model asked about fashion will produce a
+    plausible publication and a plausible date without either being real.
+    """
     with pytest.raises(ValidationError):
-        TrendNote(trend="Wide legs are back", source="", published_at=date(2026, 7, 14))
+        TrendNote(
+            trend="Wide legs are back",
+            source="",
+            published_at=date(2026, 7, 14),
+            url="https://example.test/a",
+        )
+    with pytest.raises(ValidationError):
+        TrendNote(  # type: ignore[call-arg]
+            trend="Wide legs are back",
+            source="example-publication",
+            published_at=date(2026, 7, 14),
+        )
     with pytest.raises(ValidationError):
         TrendNote(trend="Wide legs are back")  # type: ignore[call-arg]
 
@@ -31,8 +47,10 @@ def test_trend_note_accepts_a_sourced_dated_claim():
         trend="Relaxed tailoring holding through AW26",
         source="example-publication",
         published_at=date(2026, 7, 14),
+        url="https://example-publication.test/aw26-tailoring",
     )
     assert note.published_at.year == 2026
+    assert note.url.startswith("https://")
 
 
 def test_advice_has_no_commerce_fields():

@@ -45,7 +45,7 @@ import logging
 import math
 import statistics
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from typing import Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger("stylelab.generation")
@@ -172,6 +172,136 @@ class NullGenerationLog:
         return None
 
 
+#: How a trend lookup ended.
+#:
+#: `ok` and `empty` are both successes — the provider answered — and they are separated
+#: because they need different responses. A run of `empty` means the queries are wrong;
+#: a run of `timeout` means the provider is.
+TrendOutcome = Literal[
+    "ok",
+    "empty",
+    "cached",
+    "timeout",
+    "rate_limited",
+    "unavailable",
+    "malformed",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class TrendLookupEvent:
+    """One attempt to fetch trend context, cache hits included.
+
+    A retrieval, not a generation, so it gets its own event rather than being folded into
+    `GenerationEvent` with empty token columns. The two answer different questions: a
+    generation is measured on quality and cost per token, a lookup on latency, hit rate and
+    how often it left the crew a role short.
+
+    Scalars only, same rule and same test as `GenerationEvent`. In particular no query text —
+    a trend query is built from region and season, but it is still a string this process
+    composed and telemetry is not where strings go to be reviewed.
+    """
+
+    provider: str
+    outcome: TrendOutcome
+    latency_ms: int
+    #: Served from the 24-hour cache without touching the provider.
+    cache_hit: bool = False
+    #: How many notes survived normalisation, attribution and deduplication — not how many
+    #: the provider returned. The gap between the two is the interesting number and is
+    #: `dropped`.
+    results: int = 0
+    dropped: int = 0
+    #: Why the Trend Scout was skipped, in the vocabulary of `TrendOutcome`. `None` when it
+    #: was not.
+    fallback_reason: str | None = None
+    #: The rung the crew ran at as a result. 1 with trends, 2 without.
+    degradation_level: int | None = None
+    request_id: str | None = None
+    user_id: str | None = None
+
+    @property
+    def served(self) -> bool:
+        return self.outcome in ("ok", "empty", "cached")
+
+
+@runtime_checkable
+class TrendLog(Protocol):
+    """Where trend lookups go. Same contract as `GenerationLog`: synchronous, never raises."""
+
+    def record(self, event: TrendLookupEvent) -> None: ...
+
+
+class LoggingTrendLog:
+    """One structured line per lookup. INFO when it served, WARNING when it did not."""
+
+    def record(self, event: TrendLookupEvent) -> None:
+        logger.log(
+            logging.INFO if event.served else logging.WARNING,
+            "trend lookup %s",
+            event.outcome,
+            extra={
+                "provider": event.provider,
+                "outcome": event.outcome,
+                "duration_ms": event.latency_ms,
+                "cache_hit": event.cache_hit,
+                "results": event.results,
+                "dropped": event.dropped,
+                "fallback_reason": event.fallback_reason,
+                "degradation_level": event.degradation_level,
+                "request_id": event.request_id,
+                "user_id": event.user_id,
+            },
+        )
+
+
+class NullTrendLog:
+    def record(self, event: TrendLookupEvent) -> None:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class TrendMetrics:
+    """What an operator needs to know about the trend layer."""
+
+    lookups: int
+    cache_hit_rate: float
+    #: Lookups that left the crew without a Trend Scout, over all lookups. The single number
+    #: worth alerting on: it is the rate at which the product silently gets shallower.
+    skip_rate: float
+    median_latency_ms: float
+    notes_served: int
+    notes_dropped: int
+    #: Counts by `fallback_reason`, so "the provider is down" and "our queries return
+    #: nothing" are never the same incident. A mapping rather than a scalar because this is
+    #: a rollup, not an event — the leak rule binds events, which is where the risk is.
+    reasons: dict[str, int] = field(default_factory=dict)
+
+
+def trend_metrics(events: Iterable[TrendLookupEvent]) -> TrendMetrics:
+    collected = list(events)
+    lookups = len(collected)
+
+    def rate(matching: int) -> float:
+        return matching / lookups if lookups else 0.0
+
+    reasons: dict[str, int] = {}
+    for event in collected:
+        if event.fallback_reason:
+            reasons[event.fallback_reason] = reasons.get(event.fallback_reason, 0) + 1
+
+    latencies = sorted(event.latency_ms for event in collected)
+    return TrendMetrics(
+        lookups=lookups,
+        cache_hit_rate=rate(sum(1 for event in collected if event.cache_hit)),
+        skip_rate=rate(sum(1 for event in collected if not event.served)),
+        median_latency_ms=statistics.median(latencies) if latencies else 0.0,
+        notes_served=sum(event.results for event in collected),
+        notes_dropped=sum(event.dropped for event in collected),
+        reasons=reasons,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class GenerationMetrics:
     """docs/OBSERVABILITY.md's AI list, computed from a stream of events.
@@ -253,15 +383,27 @@ def _percentile(sorted_values: Sequence[int], fraction: float) -> float:
 EVENT_FIELDS: tuple[str, ...] = tuple(field.name for field in fields(GenerationEvent))
 
 
+#: Every field a trend event carries, for the same leak test.
+TREND_EVENT_FIELDS: tuple[str, ...] = tuple(field.name for field in fields(TrendLookupEvent))
+
+
 __all__ = [
     "EVENT_FIELDS",
     "REFUSED_OUTCOMES",
+    "TREND_EVENT_FIELDS",
     "GenerationEvent",
     "GenerationLog",
     "GenerationMetrics",
     "LoggingGenerationLog",
+    "LoggingTrendLog",
     "NullGenerationLog",
+    "NullTrendLog",
     "Operation",
     "Outcome",
+    "TrendLog",
+    "TrendLookupEvent",
+    "TrendMetrics",
+    "TrendOutcome",
     "generation_metrics",
+    "trend_metrics",
 ]

@@ -53,6 +53,10 @@ jobs:
         # breaks on the day it is needed.
         run: python tests/ai/runner.py
       - name: Agent ablation (each role must change the output)
+        # Red from S4 to S8b by design — a placeholder that could not fail would have been
+        # worse than a failing step, because it converts "not checked" into "checked".
+        # Green since the crew landed; a role that stops changing the output turns it red
+        # again, which is the entire point.
         run: pytest tests/ai/test_ablation.py -q
 
   e2e:

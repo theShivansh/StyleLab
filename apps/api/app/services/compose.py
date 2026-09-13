@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ from app.domain.models import AdviceRequest, GarmentCategory, ItemStatus, Wardro
 from app.domain.ranker import DeterministicRanker
 from app.domain.scoring import ScoreBreakdown, describe, score_outfit
 from app.repositories.wardrobe import StoredItem, StoredOutfit, WardrobeRepository
+from app.services.circuit import LatencyCircuit
 from app.services.composition import CompositionService
 from app.services.faults import classify
 from app.services.jobs import (
@@ -137,6 +139,7 @@ class OutfitComposer:
         ranker: DeterministicRanker | None = None,
         latency_budget_s: float | None = None,
         telemetry: GenerationLog | None = None,
+        circuit: LatencyCircuit | None = None,
     ) -> None:
         self._sessions = sessions
         self._advisor = advisor
@@ -146,6 +149,14 @@ class OutfitComposer:
         self._ranker = ranker or DeterministicRanker()
         self._latency_budget_s = latency_budget_s
         self._telemetry = telemetry
+        #: Rung 3 of the ladder (docs/AGENT-SYSTEM.md). Lives here rather than on the service
+        #: because consecutive breaches are a property of the process, and a service is built
+        #: per request — it would never see a second one.
+        self._circuit = (
+            circuit
+            if circuit is not None
+            else (LatencyCircuit(latency_budget_s) if latency_budget_s else None)
+        )
 
     # --- compose ------------------------------------------------------------------------
 
@@ -207,7 +218,7 @@ class OutfitComposer:
 
             service = CompositionService(
                 repository=None,
-                advisor=self._advisor,
+                advisor=self._advisor_for_now(),
                 ranker=self._ranker,
                 trend_source=self._trend_source,
                 latency_budget_s=self._latency_budget_s,
@@ -216,6 +227,7 @@ class OutfitComposer:
             )
 
             await self._jobs.advance(job_id, COMPOSE_STAGES[3])  # building look
+            started = time.perf_counter()
             advice = await service.compose(
                 user_id,
                 occasion=occasion,
@@ -225,6 +237,8 @@ class OutfitComposer:
                 required_roles=required_roles,
                 candidates=candidates,
             )
+            if self._circuit is not None:
+                self._circuit.record(time.perf_counter() - started)
 
             if advice.outfit is None:
                 # Not a failure. The wardrobe cannot fill a required role, and naming that
@@ -293,6 +307,26 @@ class OutfitComposer:
                 error_message=fault.message,
                 retryable=fault.retryable,
             )
+
+    def _advisor_for_now(self) -> OutfitAdvisor:
+        """The full crew, or a reduced one when the breaker is open.
+
+        `getattr` rather than an `isinstance` check against `CrewAIOutfitAdvisor`: the
+        composer must keep working with the single-call advisor and with any stub a test
+        hands it, and importing the crew here would drag thirteen seconds of CrewAI into
+        every module that touches composition. An advisor that cannot reduce simply does not.
+        """
+        if self._circuit is None or not self._circuit.tripped:
+            return self._advisor
+
+        reduce = getattr(self._advisor, "with_roles", None)
+        if reduce is None:
+            return self._advisor
+
+        from app.adapters.crew import CrewRoles
+
+        logger.warning("latency circuit open; composing with architect and editor only")
+        return reduce(CrewRoles.architect_and_editor_only(), degradation_level=3)
 
     # --- read, swap, save ----------------------------------------------------------------
 

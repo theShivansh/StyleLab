@@ -61,9 +61,28 @@ class Settings(BaseSettings):
     agent_max_output_tokens: int = 800
     agent_trend_scout_enabled: bool = True
 
-    # --- Trend source ---
-    trend_source: Literal["corpus", "web"] = "corpus"
-    trend_corpus_path: str = "data/trends"
+    # --- Trend source: Exa (docs/AGENT-SYSTEM.md) ---
+    #: Required for the Trend Scout, and for nothing else. Absent, the crew runs without
+    #: that role and discloses degradation level 2 — which is the honest state of affairs
+    #: rather than a silent omission. It is deliberately *not* a boot failure the way
+    #: `groq_api_key` is: the product composes outfits without trends, and cannot compose
+    #: them at all without a vision and text model.
+    exa_api_key: str = ""
+    #: `auto` lets Exa pick keyword or neural retrieval per query. The others are here so a
+    #: deployment can pin the behaviour; nothing in the product chooses between them.
+    exa_search_type: Literal["auto", "neural", "keyword", "fast"] = "auto"
+    #: Results per query. The spec asks for six to eight — enough that deduplication and the
+    #: attribution filter have something to work with, few enough to stay inside the latency
+    #: budget the Trend Scout shares with five other agents.
+    exa_max_results: int = 8
+    exa_timeout_s: float = 8.0
+    #: How long a normalised trend lookup is reused, keyed by region + season + style
+    #: profile. A day: fashion journalism does not turn over hourly, and the alternative is
+    #: paying for a search on every compose of every session.
+    trend_cache_ttl_s: int = 24 * 60 * 60
+    #: Where the user is, for region-aware queries. One value for now; a per-user setting is
+    #: S9's, and guessing it from an IP address would be an inference about a person.
+    trend_region: str = "global"
     trend_max_age_days: int = 120
 
     # --- Uploads ---

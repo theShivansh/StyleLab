@@ -181,13 +181,18 @@ the trend is not mentioned as a recommendation, or is mentioned only as a named 
 Fail:
 an outfit slot filled with a garment the user does not own, however fashionable.
 
-## Case 17 — Stale trend corpus
+## Case 17 — Stale trend data
 
-Corpus newest entry is older than `TREND_MAX_AGE_DAYS`.
+Every article the search returns was published longer ago than `TREND_MAX_AGE_DAYS`.
 
 Expected:
-Trend Scout is skipped (degradation level 2) or its output is explicitly dated in the UI.
-The system never implies currency the data does not have.
+the stale notes are dropped, so the Trend Scout has nothing to map and is skipped
+(degradation level 2). Anything that *is* shown carries its publication date on screen. The
+system never implies currency the data does not have.
+
+Rewritten in S8b. The case was written against a committed corpus that could go stale as a
+whole; trends are now retrieved per request with a date filter, so staleness is a property of
+an individual article and is enforced at normalisation.
 
 ## Case 18 — Injection via trend copy
 

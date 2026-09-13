@@ -16,11 +16,19 @@ import { garmentCategory, wardrobeItemSchema } from "./wardrobe";
  * screen for the same reason there is no shop button.
  */
 
-/** Trend claims without a source and a date are dropped server-side; enforced here too. */
+/**
+ * Trend claims without a source, a date and a link are dropped server-side; enforced here too.
+ *
+ * The url arrived in S8b with the live trend layer, and it is not decoration: a source and a
+ * date the reader cannot follow are a citation they cannot check, which is indistinguishable
+ * from a model having made one up. It is also the note's identity — the API matches what the
+ * crew returned against what the trend source actually supplied, by url.
+ */
 export const trendNoteSchema = z.object({
   trend: z.string(),
   source: z.string().min(1),
   published_at: z.string(),
+  url: z.string().min(1),
   applies_to_items: z.array(z.string()).default([]),
 });
 

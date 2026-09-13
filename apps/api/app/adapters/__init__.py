@@ -25,9 +25,11 @@ using `ast` so that prose does not trip them:
 
 Implementations:
   - GroqWardrobeAnalyzer     `groq_vision.py`  — live, with the availability fallback chain
-  - GroqOutfitAdvisor        `groq_text.py`    — live single call; the crew replaces it in S8b
-  - CrewAIOutfitAdvisor      phase 14 (S8b)
-  - CorpusTrendSource        phase 14 (S8b)
+  - GroqOutfitAdvisor        `groq_text.py`    — live single call; kept as the simplest
+                                                 implementation of the Protocol and as the
+                                                 thing the crew is measured against
+  - ExaTrendSource           `exa_trends.py`   — live, over a `SearchTransport` seam
+  - CrewAIOutfitAdvisor      `crew.py`         — live, the six-role crew
 
 Both live adapters take a `ChatTransport` (`transport.py`) rather than a client, which is
 what lets `MockGroqProvider` exercise the real prompt construction, parsing, retry and
@@ -38,6 +40,7 @@ Stubs for tests/ai live in tests, not here — they are test doubles, not a prod
 
 from __future__ import annotations
 
+import os
 from typing import Protocol, runtime_checkable
 
 from app.domain.models import (
@@ -48,6 +51,27 @@ from app.domain.models import (
     TrendNote,
     TrendQuery,
 )
+
+# --- vendor privacy, set before any vendor module in this package can be imported ---------
+#
+# CrewAI ships usage telemetry and an execution-trace uploader, both on by default, both read
+# at *import* time. This process handles photographs of people's clothes and the prompts
+# built from them; docs/SECURITY-PRIVACY.md has no exception for a framework's own analytics.
+#
+# Here rather than in `crew.py` for a mechanical reason: importing any module in this package
+# runs this file first, so the flags are set before `from crewai import ...` can read them.
+# Inside `crew.py` the same code would have to sit above its imports and fight the linter for
+# no gain. `Crew(tracing=False)` says it again at the call site, because an environment
+# variable is only as good as the environment.
+#
+# `setdefault`, so an operator who deliberately wants tracing in their own deployment can
+# have it by setting the variable — the default is off, and off is what ships.
+for _flag, _value in (
+    ("CREWAI_TELEMETRY_OPT_OUT", "true"),
+    ("CREWAI_TRACING_ENABLED", "false"),
+    ("OTEL_SDK_DISABLED", "true"),
+):
+    os.environ.setdefault(_flag, _value)
 
 
 @runtime_checkable

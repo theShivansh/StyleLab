@@ -25,13 +25,20 @@ An outfit slot naming an unowned id is a **hard rejection**: that garment would 
 the user. A trend note referencing one is **dropped**: a note is context, not a slot, so it
 cannot dress them in something they do not own — but it must not be shown implying they do
 either (Case 16).
+
+Trend notes carry a second check the outfit does not need: **provenance**. An outfit can only
+name ids we supplied, so the candidate set bounds it. A trend note is free prose, and a model
+asked about fashion will happily produce a confident claim with a plausible publication and
+date attached. So a returned note must match one the `TrendSource` supplied, by URL, and the
+citation is taken from the supplied note rather than from the response (Case 15, and the
+trend rules in CLAUDE.md).
 """
 
 from __future__ import annotations
 
 from app.domain.compatibility import CORE_ROLES, conflicts
 from app.domain.errors import IncompatibleOutfitError, UngroundedItemError
-from app.domain.models import AdviceRequest, OutfitAdvice, WardrobeItem
+from app.domain.models import AdviceRequest, OutfitAdvice, TrendNote, WardrobeItem
 
 
 def grounded_ids(request: AdviceRequest) -> set[str]:
@@ -70,11 +77,7 @@ def validate_advice(advice: OutfitAdvice, *, request: AdviceRequest) -> OutfitAd
             raise IncompatibleOutfitError(reasons)
 
     # Trend notes are filtered, not fatal. See the module docstring.
-    kept_notes = [
-        note
-        for note in advice.trend_notes
-        if all(item_id in allowed for item_id in note.applies_to_items)
-    ]
+    kept_notes = _kept_notes(advice, request, allowed)
 
     # A gap the user has actually filled is stale advice, not a hard failure.
     filled = {item.extraction.category for item in request.candidates}
@@ -83,19 +86,53 @@ def validate_advice(advice: OutfitAdvice, *, request: AdviceRequest) -> OutfitAd
     return advice.model_copy(update={"trend_notes": kept_notes, "wardrobe_gaps": kept_gaps})
 
 
+def _kept_notes(
+    advice: OutfitAdvice, request: AdviceRequest, allowed: set[str]
+) -> list[TrendNote]:
+    """The trend notes an advisor is permitted to have returned.
+
+    Two filters, and the second is the one that matters.
+
+    **Scope.** A note may only point at items the user owns. It cannot dress them in
+    something they do not have — a note is context, not a slot — but rendering it beside
+    their wardrobe implies they own the thing it is about.
+
+    **Provenance.** A note must be one the `TrendSource` actually supplied, matched by URL.
+    Trend input comes from the adapter, never from model recall: asking a model what is
+    currently fashionable returns confident output from a training cutoff, with a plausible
+    publication and a plausible date attached and no way for a reader to tell. That is
+    precisely the failure CLAUDE.md's trend rules describe, and before S8b nothing stopped
+    it — `trend_notes` was schema-valid and therefore accepted.
+
+    An advisor may **narrow** the supplied set, reword nothing, and attach `applies_to_items`.
+    The citation is taken from the supplied note rather than from the response, so a reworded
+    source or a shifted date cannot survive either.
+    """
+    supplied = {note.url: note for note in request.trend_notes}
+    kept: list[TrendNote] = []
+
+    for note in advice.trend_notes:
+        origin = supplied.get(note.url)
+        if origin is None:
+            continue
+        if not all(item_id in allowed for item_id in note.applies_to_items):
+            continue
+        # The claim, the source and the date are the source's; only the mapping onto the
+        # user's garments is the advisor's.
+        kept.append(origin.model_copy(update={"applies_to_items": note.applies_to_items}))
+
+    return kept
+
+
 def validate_trend_notes(advice: OutfitAdvice, *, request: AdviceRequest) -> OutfitAdvice:
     """Drop notes referencing items outside the candidate set, without touching the outfit.
 
     Used on the swap path, which re-runs Architect and Editor only and so never rebuilds the
     outfit it is validating (docs/AGENT-SYSTEM.md cost controls).
     """
-    allowed = grounded_ids(request)
-    kept = [
-        note
-        for note in advice.trend_notes
-        if all(item_id in allowed for item_id in note.applies_to_items)
-    ]
-    return advice.model_copy(update={"trend_notes": kept})
+    return advice.model_copy(
+        update={"trend_notes": _kept_notes(advice, request, grounded_ids(request))}
+    )
 
 
 __all__ = ["grounded_ids", "items_by_id", "validate_advice", "validate_trend_notes"]

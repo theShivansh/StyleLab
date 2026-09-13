@@ -10,8 +10,15 @@ Implement:
 - `OutfitAdvisor` interface, and `CrewAIOutfitAdvisor` behind it
 - the seven roles in `docs/AGENT-SYSTEM.md`, with 2‖3 and 5‖6 genuinely parallel
 - per-agent structured output schemas — no free-text handoffs between agents
-- `TrendSource` interface, `CorpusTrendSource` (default) and `WebTrendSource` (opt-in)
-- `data/trends/` corpus format: every entry carries `source`, `published_at`, `region`
+- `TrendSource` interface, and `ExaTrendSource` over Exa `POST /search`
+  **[SUPERSEDED 2026-09-13]** — this prompt asked for `CorpusTrendSource` (default) plus an
+  opt-in `WebTrendSource`, and a committed `data/trends/` corpus. Both were dropped on
+  instruction. A hand-curated corpus is a snapshot of what somebody believed on the day they
+  wrote it: it goes stale silently, it reads to a user exactly like model recall, and keeping
+  it current is a job nobody would do. There is now one implementation, live retrieval with a
+  date filter and a domain allow-list, and a `MockExaProvider` for tests and CI. Every note
+  carries `source`, `published_at` **and `url`**. See docs/AGENT-SYSTEM.md and
+  docs/DECISIONS.md.
 - Editor merge producing the `OutfitAdvice` contract in `docs/API-SPEC.md`
 - latency circuit breaker at the p95 budget, with the five-level degradation ladder
 - style-profile cache, invalidated on wardrobe change

@@ -82,7 +82,10 @@ Implementations:
 - `GroqWardrobeAnalyzer` — live, with the vision fallback chain
 - `CrewAIOutfitAdvisor` — the agent crew (`docs/AGENT-SYSTEM.md`)
 - `DeterministicRanker` — degradation step, not a product mode
-- `CorpusTrendSource` (default, `data/trends/`) · `WebTrendSource` (opt-in)
+- `ExaTrendSource` (`app/adapters/exa_trends.py`) over Exa `POST /search`, the only
+  implementation. No committed corpus — see docs/AGENT-SYSTEM.md on why there was never a
+  good version of one. Required for the Trend Scout and for nothing else: absent a key the
+  crew runs a role short and discloses degradation level 2.
 - stub implementations in `tests/ai/` — test doubles only; the running app never reaches them
 
 The domain layer must not be able to tell which implementation it holds.
@@ -252,7 +255,7 @@ honest statement of the gap.
 Record: request ID · job ID · provider · model · **model fallback activations** ·
 **per-agent latency and tokens** · **crew degradation level** · duration · token usage ·
 retry count · status · error class · extraction confidence · correction events ·
-**trend corpus age at time of use**.
+**publication date of every trend note shown**.
 
 Do not record: raw image content · secrets · inferences about the person in a photo.
 

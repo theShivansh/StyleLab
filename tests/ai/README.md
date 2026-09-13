@@ -7,7 +7,7 @@ Runs with **no API key** — verified, not assumed: `conftest.py` deliberately d
 that costs money per run stops being run.
 
 ```bash
-pytest tests/ai -q          # 71 tests, ~4 seconds
+pytest tests/ai -q          # 107 tests, ~70 seconds (13s of it is importing CrewAI)
 python tests/ai/runner.py   # the same scenarios, printed
 ```
 
@@ -38,6 +38,10 @@ if any garment outside the wardrobe reached the answer.
 | File | |
 |---|---|
 | `runner.py` | The CLI. `--case`, `--coverage`, `--response`, `--json`. Exit 1 on any failure. |
+| `crew_fixtures.py` | Scripted crew answers, keyed by the schema each agent asks for. |
+| `test_crew.py` | The crew: Cases 19 and 20, the reflexion loop, per-agent telemetry. |
+| `test_crew_ladder.py` | The degradation ladder end to end, including the circuit breaker. |
+| `test_ablation.py` | Case 21. Every role must change the output, or it gets deleted. |
 | `scenarios.py` | The 19 refusal scenarios. Each returns a `Check` instead of asserting, so the CLI and pytest consume the same objects. |
 | `cases.py` | The case registry: all 25 cases, their status, and what evidences each. |
 | `harness.py` | One wardrobe and one assembled stack, shared by everything above. |
@@ -54,9 +58,8 @@ if any garment outside the wardrobe reached the answer.
 python tests/ai/runner.py --coverage
 ```
 
-18 of 25 cases covered, 5 partial, 2 deferred. Every partial and deferred entry names what
-is missing and which session owns it; six of the seven wait on the agent crew (S8b) and one
-is blocker B18.
+24 of 25 cases covered, 1 partial, 0 deferred. The one partial is Case 09, and its note says
+exactly which half is missing and why (blocker B18).
 
 The registry would be worthless as prose, so `test_case_coverage.py` resolves it:
 
@@ -85,6 +88,13 @@ and `test_prompt_contract.py` did not cover Case 09 — and both failed on the f
   hands it, including a well-formed, confident response naming somebody else's garment —
   the only way to prove that ownership re-validation, and not the prompt, is what refuses it.
 - **`SlowAdvisor`** replaces the *clock*, for the latency budget.
+- **`MockExaProvider`** replaces the *search transport*, so the real `ExaTrendSource` runs its
+  real attribution filter, deduplication and cache above it.
+
+The crew is at the first level too, and that took a custom `crewai.BaseLLM`
+(`app/adapters/crew_llm.py`). CrewAI defaults to LiteLLM, which would have made the crew the
+one component in the product that could not be tested without an API key — the component most
+likely to produce confident nonsense.
 
 ## What this suite cannot prove
 
@@ -130,8 +140,22 @@ still stored. Those fields are open sets in the world, and they are rendered and
 which is a different class of problem from one only a downstream prompt ever sees — but it
 is not nothing. Blocker B18.
 
-## Still to come
+## A note on speed
 
-`test_ablation.py` (Case 21) lands in S8b with the crew. CI references it and that step is
-red until it exists — a placeholder ablation test would defeat the purpose, since the whole
-point is that it must be able to fail.
+`pytest tests/ai -q` is a few seconds for everything that does not need a crew, and about
+thirty with the crew files, because importing CrewAI costs ~13 seconds. Nothing outside
+`test_crew.py`, `test_crew_ladder.py` and `test_ablation.py` imports it. If you are iterating
+on grounding, `pytest tests/ai -q --ignore=tests/ai/test_crew.py --ignore=tests/ai/test_crew_ladder.py
+--ignore=tests/ai/test_ablation.py` keeps the fast loop fast.
+
+## What S8b found
+
+The ablation test was the headline, but the defect was in the trend layer.
+
+**An advisor could invent a citation and nothing stopped it.** `trend_notes` was schema-valid
+and therefore accepted, so a model returning *"Chrome is the colour of the season — A Real
+Magazine, 2026-08-20"* would have rendered, with a date, beside the user's own clothes. That is
+precisely the gimmick CLAUDE.md's trend rules exist to prevent, and it had been sitting in the
+product since S5. Notes are now matched by url against what the `TrendSource` actually supplied,
+and the claim, publication and date are taken from the supplied note — so a reworded citation
+does not survive either.

@@ -314,6 +314,38 @@ export default function OutfitPage() {
             </Card>
           )}
 
+          {complete && outfit.trend_notes.length > 0 && (
+            <Card className="p-5">
+              <h2 className="text-eyebrow text-ink-muted uppercase">What&apos;s current</h2>
+              {/*
+                Every claim carries its publication, its date and a link, because a trend the
+                reader cannot check is a trend we are asking them to take on faith — and the
+                whole reason this comes from a search adapter rather than the model is that we
+                are not asking them to. A note that lost any of the three was dropped before
+                it reached this page.
+              */}
+              <ul className="mt-3 space-y-3">
+                {outfit.trend_notes.map((note) => (
+                  <li key={note.url} className="text-sm">
+                    {note.trend}
+                    <span className="text-ink-muted block text-xs">
+                      <a
+                        href={note.url}
+                        target="_blank"
+                        rel="noopener noreferrer nofollow"
+                        className="hover:text-ink underline underline-offset-2"
+                      >
+                        {note.source}
+                      </a>
+                      {" · "}
+                      {formatDate(note.published_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           {outfit.wardrobe_gaps.length > 0 && (
             <Card className="p-5">
               <h2 className="text-eyebrow text-ink-muted uppercase">What would unlock more</h2>
@@ -358,6 +390,23 @@ export default function OutfitPage() {
       />
     </Shell>
   );
+}
+
+/**
+ * A publication date, readably.
+ *
+ * Falls back to the raw string rather than throwing or hiding: a date we cannot parse is
+ * still a date the publisher gave, and showing it is more honest than showing nothing beside
+ * a claim about what is current.
+ */
+function formatDate(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

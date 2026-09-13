@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 API_APP = REPO_ROOT / "apps" / "api" / "app"
 ADAPTERS = API_APP / "adapters"
 
-VENDOR_MODULES = {"groq", "crewai", "autogen", "ag2", "langchain"}
+VENDOR_MODULES = {"groq", "crewai", "autogen", "ag2", "langchain", "exa_py", "exa"}
 
 
 def _non_adapter_sources() -> list[Path]:

@@ -42,7 +42,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.adapters.boot import default_transport, verify_models
-from app.adapters.groq_text import GroqOutfitAdvisor
+from app.adapters.exa_search import ExaSearchTransport
+from app.adapters.exa_trends import ExaTrendSource
 from app.adapters.groq_vision import GroqWardrobeAnalyzer
 from app.adapters.transport import ChatTransport
 from app.config import get_settings
@@ -59,11 +60,45 @@ from app.services.compose import OutfitComposer
 from app.services.ingest import UploadLimits, WardrobeIngestService
 from app.services.jobs import BackgroundJobs, InMemoryJobStore
 from app.services.storage import InlineImageSource, LocalObjectStore, ObjectStore
-from app.services.telemetry import LoggingGenerationLog
+from app.services.telemetry import LoggingGenerationLog, LoggingTrendLog
 
 logger = logging.getLogger("stylelab")
 
 API_PREFIX = "/api/v1"
+
+
+def _trend_source(settings, trend_log):
+    """The Trend Scout's supply, or `None` and a loud line saying why not.
+
+    Exa is a **required runtime dependency for the Trend Scout and for nothing else**. Absent
+    a key the crew runs without that role and discloses degradation level 2, which is the
+    honest state of affairs rather than a silent omission.
+
+    Deliberately not a boot failure, unlike `GROQ_API_KEY`. The distinction is what the
+    product can still do: it composes perfectly good outfits with no trend context, and it
+    cannot compose anything at all without a vision and a text model. A boot check that
+    refused to start over a missing trend key would be treating a nice-to-have as the
+    product.
+    """
+    if not settings.exa_api_key:
+        logger.warning(
+            "EXA_API_KEY is not set: the Trend Scout is disabled and every composition "
+            "will report degradation level 2. Outfits are unaffected."
+        )
+        return None
+
+    logger.info("trend source: exa (region=%s)", settings.trend_region)
+    return ExaTrendSource(
+        transport=ExaSearchTransport(
+            api_key=settings.exa_api_key, timeout_s=settings.exa_timeout_s
+        ),
+        max_results=settings.exa_max_results,
+        search_type=settings.exa_search_type,
+        region=settings.trend_region,
+        max_age_days=settings.trend_max_age_days,
+        cache_ttl_s=settings.trend_cache_ttl_s,
+        telemetry=trend_log,
+    )
 
 
 def create_app(
@@ -92,11 +127,14 @@ def create_app(
         # working link to a user's photograph on every image the wardrobe renders.
         install_log_redaction()
         logger.info(
-            "stylelab api starting: text=%s vision=%s fallback=%s trend_source=%s",
+            "stylelab api starting: text=%s vision=%s fallback=%s trends=%s",
             settings.groq_text_model,
             settings.groq_vision_model,
             settings.groq_vision_fallback_model,
-            settings.trend_source,
+            # Whether the Trend Scout has a supply, not the key. Logging a key, or enough of
+            # one to recognise it, is the sort of thing that happens once and is in a log
+            # aggregator forever.
+            "exa" if settings.exa_api_key else "disabled",
         )
 
         app.state.transport = transport or default_transport(settings)
@@ -152,20 +190,27 @@ def create_app(
             ),
         )
 
+        app.state.trend_log = LoggingTrendLog()
+        app.state.trends = _trend_source(settings, app.state.trend_log)
+
+        # Imported here, not at module scope. CrewAI costs about thirteen seconds to import,
+        # and `create_app` is called by every test that touches the HTTP surface — paying it
+        # at the one place that actually builds a crew keeps the fast suites fast.
+        from app.adapters.crew import CrewAIOutfitAdvisor
+
         app.state.composer = OutfitComposer(
             sessions=app.state.sessions,
-            advisor=GroqOutfitAdvisor(
+            # The crew (docs/AGENT-SYSTEM.md), behind the same `OutfitAdvisor` Protocol the
+            # single-call advisor implements. `CompositionService` cannot tell which it has,
+            # which is what lets the ladder fall from one to the other.
+            advisor=CrewAIOutfitAdvisor(
                 app.state.transport,
                 model=settings.groq_text_model,
                 max_tokens=settings.agent_max_output_tokens,
             ),
             jobs=app.state.jobs,
             background=app.state.background,
-            # No trend source yet: the corpus is blocker B8 and lands with the crew in S8b.
-            # `None` costs a rung (2) and is disclosed as one, which is the honest state of
-            # affairs — a source that returned nothing would report full depth for advice
-            # that had no trend input.
-            trend_source=None,
+            trend_source=app.state.trends,
             # The ceiling on the whole advisor call. Without it the waits compound — three
             # transport attempts inside two advisor attempts, each with its own 30-second
             # client timeout — and a compose nobody cancels can run for minutes.

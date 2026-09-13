@@ -12,9 +12,35 @@ the point.
 
 from __future__ import annotations
 
+import importlib.util
 import io
+import sys
+from pathlib import Path
+from types import ModuleType
 
 from PIL import Image
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def load_from_tests_ai(name: str, filename: str) -> ModuleType:
+    """Import a module out of the repository-root `tests/ai/` directory.
+
+    Loaded by explicit file path rather than by putting the repository root on `sys.path`,
+    because that root contains a `tests` package of its own and the two would collide under
+    one import name. `conftest.py` uses the same trick for `stubs.py`; this lives here so a
+    test module can reach the crew fixtures at import time, which a fixture cannot help with.
+    """
+    cached = sys.modules.get(name)
+    if cached is not None:
+        return cached
+    path = REPO_ROOT / "tests" / "ai" / filename
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def make_image(
@@ -46,4 +72,4 @@ def make_image(
     return buffer.getvalue()
 
 
-__all__ = ["make_image"]
+__all__ = ["load_from_tests_ai", "make_image"]

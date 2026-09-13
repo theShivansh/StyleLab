@@ -143,7 +143,8 @@ async def test_an_empty_wardrobe_is_a_gap_not_a_crash(session, stubs):
 
 
 async def test_a_trend_note_may_contextualise_an_owned_item(repo, stubs):
-    """Case 16, the allowed half: the note survives because it points at something owned."""
+    """Case 16, the allowed half: the note survives because it points at something owned —
+    and because the trend source is the one that supplied it."""
     source = stubs.StaticTrendSource(stubs.trend_note(applies_to_items=["bottom-1"]))
     advisor = stubs.ScriptedAdvisor(
         OutfitAdvice(
@@ -169,6 +170,9 @@ async def test_a_trend_note_pointing_at_an_unowned_item_is_dropped(repo, stubs):
     """Case 16, the forbidden half. Dropped rather than a hard failure: a note is context,
     not a slot, so it cannot put an unowned garment on the user — but it also must not be
     shown implying they own something they do not."""
+    wide = stubs.trend_note("Wide legs are current", url="https://pub.test/wide")
+    neutral = stubs.trend_note("Neutrals hold", url="https://pub.test/neutral")
+    source = stubs.StaticTrendSource(wide, neutral)
     advisor = stubs.ScriptedAdvisor(
         OutfitAdvice(
             outfit=Outfit(
@@ -178,16 +182,97 @@ async def test_a_trend_note_pointing_at_an_unowned_item_is_dropped(repo, stubs):
                 match_score=80,
             ),
             trend_notes=[
-                stubs.trend_note("Wide legs are current", applies_to_items=["not-owned"]),
-                stubs.trend_note("Neutrals hold", applies_to_items=["top-1"]),
+                wide.model_copy(update={"applies_to_items": ["not-owned"]}),
+                neutral.model_copy(update={"applies_to_items": ["top-1"]}),
             ],
         )
     )
-    advice = await CompositionService(repo, advisor=advisor).compose(U1, occasion="everyday")
+    advice = await CompositionService(repo, advisor=advisor, trend_source=source).compose(
+        U1, occasion="everyday"
+    )
 
     assert [n.trend for n in advice.trend_notes] == ["Neutrals hold"]
     assert advice.outfit is not None
     assert advice.outfit.item_ids == ["top-1", "bottom-1", "shoe-1"]
+
+
+async def test_a_trend_note_the_source_never_supplied_is_dropped(repo, stubs):
+    """Case 15 with teeth, and a hole S8b found open.
+
+    The invented note below is schema-valid: a claim, a publication, a date, a link, and it
+    points at a garment the user owns. The trend source returned one note and the advisor
+    returned two. Before this check, model recall dressed as a citation was rendered to the
+    user, which is exactly what the trend rules in CLAUDE.md exist to prevent.
+    """
+    real = stubs.trend_note("Neutrals hold", url="https://pub.test/neutral")
+    invented = stubs.trend_note(
+        "Chrome is the colour of the season",
+        source="A Real Magazine",
+        url="https://magazine.test/chrome-ss27",
+    )
+    advisor = stubs.ScriptedAdvisor(
+        OutfitAdvice(
+            outfit=Outfit(
+                item_ids=["top-1", "bottom-1", "shoe-1"],
+                name="x",
+                occasion="everyday",
+                match_score=80,
+            ),
+            trend_notes=[
+                real.model_copy(update={"applies_to_items": ["top-1"]}),
+                invented.model_copy(update={"applies_to_items": ["top-1"]}),
+            ],
+        )
+    )
+
+    advice = await CompositionService(
+        repo, advisor=advisor, trend_source=stubs.StaticTrendSource(real)
+    ).compose(U1, occasion="everyday")
+
+    assert [n.trend for n in advice.trend_notes] == ["Neutrals hold"]
+
+
+async def test_the_citation_comes_from_the_source_not_from_the_advisor(repo, stubs):
+    """An advisor may map a note onto garments. It may not restate the claim.
+
+    Rewording is how a citation drifts away from what the article actually said while keeping
+    the link that makes it look checkable.
+    """
+    from datetime import date
+
+    real = stubs.trend_note("Neutrals hold", url="https://pub.test/neutral")
+    reworded = real.model_copy(
+        update={
+            "trend": "Neutrals are over, everyone is wearing chrome",
+            "source": "Somebody Else Weekly",
+            "published_at": date(2020, 1, 1),
+            "applies_to_items": ["top-1"],
+        }
+    )
+    advisor = stubs.ScriptedAdvisor(
+        OutfitAdvice(
+            outfit=Outfit(
+                item_ids=["top-1", "bottom-1", "shoe-1"],
+                name="x",
+                occasion="everyday",
+                match_score=80,
+            ),
+            trend_notes=[reworded],
+        )
+    )
+
+    advice = await CompositionService(
+        repo, advisor=advisor, trend_source=stubs.StaticTrendSource(real)
+    ).compose(U1, occasion="everyday")
+
+    kept = advice.trend_notes[0]
+    assert (kept.trend, kept.source, kept.published_at) == (
+        real.trend,
+        real.source,
+        real.published_at,
+    )
+    # The one thing the advisor is allowed to decide survives.
+    assert kept.applies_to_items == ["top-1"]
 
 
 async def test_an_unavailable_trend_source_drops_one_rung_not_the_answer(repo, stubs):

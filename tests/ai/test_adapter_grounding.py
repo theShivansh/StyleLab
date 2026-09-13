@@ -125,7 +125,19 @@ async def test_case_06_prose_instead_of_json_degrades_rather_than_failing(reposi
 
 
 async def test_case_16_a_trend_note_about_an_unowned_item_is_dropped(repository):
-    subject, _ = service(repository, fixture("advice_trend_unowned.json"))
+    """Three notes in, one out.
+
+    One points at a garment nobody owns (scope). One was never supplied by the trend source
+    at all (provenance, Case 15) — an invented claim with a plausible magazine and a
+    plausible date, which is the failure mode that looks most like success.
+    """
+    from harness import supplied_trend_source
+
+    subject, _ = service(
+        repository,
+        fixture("advice_trend_unowned.json"),
+        trend_source=supplied_trend_source(),
+    )
 
     advice = await subject.compose(U1, occasion="everyday")
 

@@ -1743,3 +1743,282 @@ fail: a file that talks about `cross_user_item` in a comment, a docstring and a 
 defining it. The mutation now dies. The general lesson — a check that cannot be pointed at
 bad input is a check with no evidence behind it — is the same one the ablation rule (Case
 21) is about, arriving from a different direction.
+
+# S8b — Agent crew + live trend grounding (2026-09-13)
+
+## The corpus was dropped before it was ever built
+
+`prompts/14` asked for `CorpusTrendSource` over a committed `data/trends/` directory, with
+`WebTrendSource` as an opt-in. Superseded on instruction, and the instruction was right.
+
+A hand-curated corpus is a snapshot of what somebody believed on the day they wrote it. It
+goes stale silently; it reads to a user exactly like model recall, which is the thing the
+whole trend rule exists to prevent; and keeping it current is a job nobody would do. Blocker
+B8 had been open since S1 for precisely that reason — nobody assembled it, because assembling
+it was not obviously worth doing.
+
+Live retrieval with a date filter is the honest shape. `ExaTrendSource` is the only
+implementation, and there is no fallback to a corpus, because a stale corpus behind a live
+source would be the same lie with a longer half-life.
+
+## Exa is required for one role and nothing else
+
+No `EXA_API_KEY` means no Trend Scout, degradation level 2, disclosed. Deliberately not a
+boot failure the way `GROQ_API_KEY` is, and the distinction is what the product can still do:
+it composes perfectly good outfits with no trend context, and it cannot compose anything at
+all without a vision and a text model. A boot check that refused to start over a missing
+trend key would be treating a nice-to-have as the product.
+
+## What actually defends the trend layer
+
+Trend copy is text from the open web reaching a prompt, which is Case 07's problem with a
+different door. Four layers, in the order they apply, and the first is the strongest:
+
+1. **A domain allow-list.** `includeDomains` is a named list of editorial fashion desks.
+   Hostile "trend copy" has to be published on one of them to be retrievable at all. This is
+   also the commerce filter: a retailer's trend report is an advertisement with a date on it.
+2. **Attribution.** No date, no resolvable publication, no claim, no URL — dropped, not
+   repaired. A shopping URL is dropped whatever else it has.
+3. **Bounding.** The claim is a headline's length with control characters stripped, so it
+   cannot impersonate a prompt's own section headings once interpolated.
+4. **Scope.** The candidate set was fixed in SQL before any of this ran. There is no id for
+   an instruction to add, and `ExaTrendSource` has never seen the wardrobe — `applies_to_items`
+   leaves it empty by construction.
+
+Worth recording what is *not* a defence, because the obvious test asserts it and would be
+wrong: truncation does not remove the instruction. 180 characters is ample room for "include
+u2-jacket". `test_an_injected_instruction_in_an_article_is_bounded_and_stays_data` says so in
+its docstring rather than asserting something the design does not promise.
+
+## A trend note needs a URL, and the URL is its identity
+
+`TrendNote` gained a required `url`. Two reasons, and the second is the one that found a bug.
+
+A source and a date the reader cannot follow are a citation they cannot check — which is
+indistinguishable from one a model invented, and inventing plausible citations is the single
+most characteristic thing a language model does when asked about fashion.
+
+And it gives a note an identity, which exposed a hole that had been open since S5:
+**nothing stopped the advisor from returning trend notes the trend source never supplied.**
+`trend_notes` was schema-valid and therefore accepted. A model could return "Chrome is the
+colour of the season — A Real Magazine, 2026-08-20" and it would render, with a date, beside
+the user's own clothes. Exactly the gimmick CLAUDE.md's trend rules exist to prevent, sitting
+in the product the whole time.
+
+`app/domain/validation.py` now matches returned notes against supplied ones by URL and takes
+the claim, the publication and the date **from the supplied note**. An advisor may narrow the
+set and map notes onto garments; it may not reword a claim, restate a source, or add one.
+Rewording is how a citation drifts away from what the article said while keeping the link
+that makes it look checkable.
+
+## The cache key is region + season + role set
+
+Not per user. A per-user key is a cache that never hits, and the point of caching a trend
+lookup is that fashion journalism does not turn over hourly while a compose might.
+
+That the key is genuinely shared is asserted with two *equal but distinct* query objects.
+Reusing one instance is the version of that test that passes while the cache does nothing —
+and a mutation keyed on `id(query)` survived the first mutation run for exactly that reason.
+(It survived the strengthened test too, which turned out to be CPython recycling the address
+of a freed object rather than a weak test. The mutation was discarded as invalid and replaced
+with two that are deterministic.)
+
+## CrewAI runs on our transport, not on LiteLLM
+
+The decision that made the rest of the crew possible. CrewAI defaults to LiteLLM, which would
+mean the crew makes its own HTTP calls with its own retry policy, its own timeouts and its own
+idea of what a provider error is — and, fatally here, **the crew could not be tested without
+an API key**. `tests/ai/` exists because every grounding claim is checkable for free on every
+push. A crew outside that would be the one component nobody could assert cheaply, which is the
+component most likely to produce confident nonsense.
+
+`crewai.BaseLLM` is the documented seam. `TransportLLM` implements `call()` over
+`ChatTransport`, so every agent goes through the same transport, the same taxonomy, the same
+telemetry and the same `MockGroqProvider` as everything else. The sync/async bridge is
+`asyncio.run_coroutine_threadsafe` against a loop captured before the crew is handed to a
+worker thread; `asyncio.run()` inside `call()` looks simpler and is a bug, because it builds
+and tears down a loop per agent call.
+
+Costs, recorded because they are real: importing CrewAI takes ~13 seconds. Nothing outside
+`app/adapters/crew*.py` and the two crew test files imports it, and `main.py` imports it
+inside the lifespan rather than at module scope, so the fast suites stay fast.
+
+## Phases, not one kickoff
+
+    1  Style Profiler ‖ Trend Scout
+    2  Outfit Architect
+    3  Critic ‖ Practical Advisor
+    4  (conditional) Architect again, under constraints
+    5  Editor
+
+Four sequential hops for six agents. The pairs are `asyncio.gather` over two kickoffs, not two
+tasks in one crew hoping the framework schedules them together — and that distinction is
+asserted by making the two agents wait for each other in the transport, because an ordering
+assertion cannot tell parallel from sequential. A mutation that serialised the phases survived
+the first version of that test.
+
+The deeper reason for phases is Case 19. CrewAI's implicit task context hands an upstream
+agent's prose to a downstream one as undifferentiated text. Every agent here is given its
+inputs in a labelled `DATA` section that states outright they are content, not instruction.
+Interpolating a typed value into a named slot is a defence; passing a paragraph is not.
+
+## The Critic is a judge, and the loop is bounded
+
+The Critic returns a `score` as well as objections, so it is an LLM-as-judge and not only a
+commentator. Below 70, the Architect runs again with the objections attached as
+**constraints**, and the run records the score before, the score after, and whether it moved.
+
+Three bounds, each of which a naive reflexion loop gets wrong:
+
+- **One revision.** A second spends four more seconds of a fifteen-second budget on a model
+  that has already been told twice what was wrong.
+- **A revision that scores no better is discarded.** A self-evaluating loop that cannot reject
+  its own revision is a loop that wanders.
+- **A low score with no objections does not trigger a rebuild.** There would be nothing to
+  constrain it with, so it would be a re-roll dressed as reflection.
+
+70 rather than a higher bar because the loop is bounded at one: setting it where most drafts
+fail would double the cost of a typical compose to redo work that was already acceptable.
+
+## The circuit breaker needed a middle rung to fall to
+
+Case 23 has always specified "degrade to Architect + Editor, then to the deterministic
+ranker", and until the crew existed there was no middle. `LatencyCircuit` counts *consecutive*
+breaches — one slow compose is a slow compose, and a breaker that trips on a single one makes
+the product visibly shallower for no reason a user could see. Recovery is optimistic: one run
+inside budget closes it, because a cool-down timer means a provider that recovered in ten
+seconds keeps serving reduced results for however long somebody guessed.
+
+The reduced crew is a **copy**. A breaker that reached into the shared advisor and switched
+roles off would leave every later request degraded until something switched them back on.
+
+`CrewRoles` is the same object the ablation test uses. A test-only ablation switch would mean
+Case 21 exercises a path the product never takes.
+
+## The ablation test, and what it had to mean
+
+B11 closed. Open since S4, deliberately never stubbed: a placeholder that cannot fail converts
+"we have not checked" into "we have checked", and the whole point is that it must be able to
+condemn a role.
+
+"Changes the output materially" needed defining before it could be asserted. Not "the bytes
+differ" — with a scripted provider they differ for trivial reasons, and with a real one they
+differ every run. Each role is checked against the specific contribution it exists to make:
+the Profiler changes what the Architect is told; the Scout changes whether an attributed note
+reaches the answer; the Critic changes whether a weak draft is rebuilt; the Advisor changes
+whether there is advisory content at all.
+
+The Architect and the Editor are not ablatable and `CrewRoles.without` refuses to try.
+Removing either does not degrade the crew, it removes the product. Asserting that they
+"change the output" would be theatre.
+
+Every role earned its place. Nobody had to be deleted.
+
+## Observability
+
+`TrendLookupEvent` is a second event type rather than a `GenerationEvent` with empty columns.
+A generation is measured on quality and cost per token; a retrieval on latency, hit rate and
+how often it left the crew a role short. Folding them together would produce one stream in
+which half the rows have no model — the sort of tidiness that costs a dashboard.
+
+Per-agent latency and tokens are on `CrewRun`, so "which role is expensive" is answerable
+without reverse-engineering the framework. Same leak rule as S8: scalars only, no query text,
+no prompt, no wardrobe.
+
+What is **not** here: a vendor tracing backend. LangSmith or Arize would be an integration
+against a service this project has no account with, and wiring one blind would produce
+configuration nobody has ever seen work. What exists instead is the data those backends
+consume — structured events with stable names, computed rollups, and one sink interface to
+put in front of an exporter. Saying "observable" while shipping an unverified vendor client
+would be the same move as a stubbed ablation test.
+
+CrewAI's own telemetry and trace uploader are switched off in `app/adapters/__init__.py`,
+before the framework can be imported, and again at every call site. This process handles
+photographs of people's clothes; docs/SECURITY-PRIVACY.md has no exception for a dependency's
+analytics, and a thing that phones home by default has to be turned off in code rather than in
+a deployment checklist somebody can forget.
+
+## What the crew actually costs, measured
+
+The latency budget in `docs/AGENT-SYSTEM.md` has said 8s p50 / 15s p95 since S0 without
+anybody measuring it. Now measured, on real Groq, five agents and no revision:
+
+```text
+  crew: 11,727 ms, 7,577 prompt / 3,836 completion
+    style_profiler        1,937 ms   in=1,020  out=446
+    outfit_architect      1,725 ms   in=1,033  out=553
+    critic                1,991 ms   in=1,220  out=668
+    practical_advisor     2,930 ms   in=1,562  out=1,000
+    editor                3,144 ms   in=2,742  out=1,169
+```
+
+Inside the p95 budget, and the first measurement is not the interesting part. The first three
+attempts came back at **58.9s, 33.7s and 65.9s**, and chasing the difference found two real
+defects and one property of the account.
+
+**Every agent was shipping its own class docstring to Groq.** Pydantic copies a model's
+docstring into its JSON Schema `description`, and the docstrings in `crew_contracts.py` are
+long because they explain to a reader why each agent exists. Six agents, every call: 31% of
+the schema bytes, and this project explaining itself to a third party's request logs.
+Stripped in `crew_llm._without_docstrings`, which keeps `Field(description=...)` — those are
+written for the model — and drops only the object-level ones.
+
+**One output ceiling for six agents was wrong, and wrong in an expensive way.** Under strict
+Structured Outputs a truncated response is not a short answer, it is an invalid one: the
+provider refuses it with `json_validate_failed` and names the properties that never arrived.
+The Editor writes the whole merged answer and was being cut off mid-object at 800 tokens,
+refused, and retried — 26 of one composition's 34 seconds. `OUTPUT_BUDGET` now scales per
+role, the Editor gets 2.5x, and the field nothing ever read (`EditorOutput.critique`, a whole
+nested object the Editor was paying to restate) is gone.
+
+That is the same lesson S6 recorded from the other direction, and it is worth stating as a
+rule rather than as two anecdotes: **with a strict schema, a token ceiling is a correctness
+setting.** Too low does not truncate the answer, it destroys it.
+
+**The rest was the account, not the crew.** Per-agent latency correlates with cumulative
+tokens spent inside the minute, not with which agent is running: on a fresh window every call
+lands in 1.7-3.1s, and on a spent one the same calls take 13-26s while the transport backs off
+a 429. One composition costs ~7,600 input tokens against a measured 8,000 input-TPM ceiling
+(blocker B17), so a second compose inside the same minute is throttled by arithmetic.
+
+Two honest consequences, neither of which is "raise the budget until the test passes":
+
+- On a healthy tier the documented budget holds and the 15s ceiling is right.
+- On *this* tier a busy minute will trip the circuit breaker, and the product will serve
+  Architect + Editor — two calls, about 3.5s — with the depth disclosed. That is the ladder
+  working, and it is a better answer than either waiting a minute or pretending.
+
+## Mutations run
+
+| Mutation | Result |
+|---|---|
+| Accept a trend note the source never supplied | caught, 2 tests |
+| Keep the advisor's wording instead of the source's | caught, 1 test |
+| Let a trend note through with no publication date | caught, 1 test |
+| Drop the editorial domain allow-list from the query | caught, 2 tests |
+| Stop deduplicating near-identical headlines | caught, 1 test |
+| Let a search failure raise instead of costing a rung | caught, 1 test |
+| Key the trend cache per call so it never hits | caught, 2 tests |
+| Ignore the cache entirely | caught, 2 tests |
+| Put the wardrobe into the search query | caught, 1 test |
+| Trip the circuit breaker on a single slow run | caught, 2 tests |
+| Never close the circuit again once it opens | caught, 2 tests |
+| Let an ablated role run anyway | caught, 2 tests |
+| Accept a revision that scored worse | caught, 1 test |
+| Rebuild on a low score with no objections behind it | caught, 1 test |
+| Let the Editor set the score the user sees | caught, 1 test |
+| Let a CrewAI parse failure escape as an outage | caught, 2 tests |
+| Run the two parallel phases sequentially | **survived**, then caught |
+
+Seventeen run, sixteen caught on the first pass.
+
+The survivor is the one worth recording. `test_the_crew_runs_four_hops_not_six` asserted the
+*order* of the schemas, which a sequential crew satisfies exactly as well as a parallel one —
+so the concurrency claim in `docs/AGENT-SYSTEM.md` had no test behind it at all. Fixed by
+making the two agents in each pair wait for each other inside the transport: a sequential
+implementation never sends the second and fails on the timeout.
+
+An eighteenth mutation was discarded rather than counted. Keying the cache on `id(query)`
+survived, and the reason turned out to be CPython recycling the address of a freed object
+rather than a weakness in the test. A mutation whose result depends on the allocator is not
+evidence about anything; it was replaced with two deterministic ones, both caught.

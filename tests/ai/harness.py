@@ -37,7 +37,9 @@ from stubs import (
     CollectingGenerationLog,
     FakeImageReferences,
     MockGroqProvider,
+    StaticTrendSource,
     garment,
+    trend_note,
 )
 
 #: The requesting user, and the one whose wardrobe must never be reachable from it.
@@ -60,6 +62,34 @@ OWNED: tuple[tuple[str, C, str], ...] = (
 
 #: What U2 owns. It would score well, and that is the point.
 FOREIGN_ITEM = "u2-jacket"
+
+#: The two notes a trend source supplies in the scenarios that use one. Notes are matched
+#: back to these by URL (`app.domain.validation`), so a scenario that wants a note to survive
+#: has to supply it here — which is the rule under test, not a fixture inconvenience.
+SUPPLIED_TRENDS: tuple[tuple[str, str, str], ...] = (
+    (
+        "Wide-leg trousers still reading current",
+        "example-publication",
+        "https://example-publication.test/wide-leg",
+    ),
+    (
+        "Neutral palettes holding through AW26",
+        "example-publication",
+        "https://example-publication.test/neutral-palettes",
+    ),
+)
+
+
+def supplied_trend_source() -> StaticTrendSource:
+    """A `TrendSource` returning exactly the notes the fixtures cite."""
+    from datetime import date
+
+    return StaticTrendSource(
+        *(
+            trend_note(trend, source=source, url=url, published_at=date(2026, 8, 2))
+            for trend, source, url in SUPPLIED_TRENDS
+        )
+    )
 
 
 @dataclass
@@ -173,6 +203,7 @@ def analyzer(
 __all__ = [
     "FOREIGN_ITEM",
     "OWNED",
+    "SUPPLIED_TRENDS",
     "TEXT_MODEL",
     "U1",
     "U2",
@@ -181,5 +212,6 @@ __all__ = [
     "Stack",
     "analyzer",
     "stack",
+    "supplied_trend_source",
     "wardrobe",
 ]

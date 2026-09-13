@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -93,10 +93,17 @@ def garment(
 
 
 def trend_note(trend: str = "Relaxed tailoring holding through AW26", **over: object) -> TrendNote:
+    """An attributed, dated, linked trend claim.
+
+    The URL is not decoration: it is the note's identity, and `app.domain.validation` matches
+    an advisor's returned notes against the supplied ones by it. Two notes in one test need
+    two URLs.
+    """
     payload: dict[str, object] = {
         "trend": trend,
         "source": "example-publication",
         "published_at": date(2026, 7, 14),
+        "url": "https://example-publication.test/aw26-tailoring",
     }
     payload.update(over)
     return TrendNote(**payload)  # type: ignore[arg-type]
@@ -203,6 +210,110 @@ class ScriptedAnalyzer:
         return self.queue[0]
 
 
+@dataclass
+class MockExaProvider:
+    """A `SearchTransport` that returns scripted results, or raises.
+
+    The Exa half of `MockGroqProvider`, and it sits at the same depth for the same reason:
+    it replaces the **transport**, so the real `ExaTrendSource` above it runs its real query
+    construction, real attribution filter, real deduplication and real cache. A double that
+    replaced `TrendSource` instead would prove that a stub returns what the stub was told to.
+
+    `script` may be a `SearchResponse`, an `Exception` to raise, or a list of either consumed
+    in order with the last entry repeating. `queries` records every search, which is how the
+    privacy tests assert that no wardrobe text and no user id ever reached a third party.
+    """
+
+    script: Any = None
+    queries: list[Any] = field(default_factory=list)
+    latency_ms: int = 42
+
+    @classmethod
+    def returning(cls, *hits: Any, latency_ms: int = 42) -> MockExaProvider:
+        from app.adapters.search import SearchResponse
+
+        return cls(
+            script=SearchResponse(
+                hits=tuple(hits),
+                latency_ms=latency_ms,
+                request_id="req_mock_exa",
+                resolved_type="neural",
+            ),
+            latency_ms=latency_ms,
+        )
+
+    @classmethod
+    def raising(cls, error: Exception) -> MockExaProvider:
+        return cls(script=error)
+
+    async def search(self, query: Any) -> Any:
+        from app.adapters.search import SearchResponse
+
+        self.queries.append(query)
+
+        entry = self.script
+        if isinstance(entry, list):
+            if not entry:
+                raise AssertionError("mock exa script is exhausted")
+            entry = entry.pop(0) if len(entry) > 1 else entry[0]
+
+        if isinstance(entry, Exception):
+            raise entry
+        if entry is None:
+            return SearchResponse(hits=(), latency_ms=self.latency_ms)
+        return entry
+
+    @property
+    def phrases(self) -> list[str]:
+        """Every search string sent, for asserting on what left the building."""
+        return [query.query for query in self.queries]
+
+
+#: Distinguishes "caller said nothing" from "caller said None". `published_at=None` is a
+#: real and important case — a result with no date is the one Case 15 is about — so it
+#: cannot double as the default.
+UNSET: Any = object()
+
+
+def search_hit(
+    url: str = "https://vogue.com/fashion/aw26-tailoring",
+    *,
+    title: str | None = "Relaxed tailoring is the shape of AW26",
+    published_at: Any = UNSET,
+    highlights: tuple[str, ...] = ("Shoulders have softened and trousers have widened.",),
+    **over: Any,
+) -> Any:
+    """One provider-neutral search result, defaulted to a well-formed editorial one.
+
+    The date defaults to *today* rather than to a fixed one: the staleness filter is real, and
+    a fixture pinned to a literal date would start being dropped the moment the clock moved
+    past the window, failing tests that are about something else entirely.
+    """
+    from app.adapters.search import SearchHit
+
+    return SearchHit(
+        url=url,
+        title=title,
+        published_at=datetime.now(UTC).date() if published_at is UNSET else published_at,
+        highlights=highlights,
+        **over,
+    )
+
+
+class CollectingTrendLog:
+    """A `TrendLog` that keeps what it is given."""
+
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def record(self, event: Any) -> None:
+        self.events.append(event)
+
+    @property
+    def outcomes(self) -> list[str]:
+        return [event.outcome for event in self.events]
+
+
 class StaticTrendSource:
     def __init__(self, *notes: TrendNote) -> None:
         self.notes = list(notes)
@@ -292,9 +403,18 @@ class MockGroqProvider:
     """
 
     script: dict[str, Any] = field(default_factory=dict)
+    #: Scripted by the **schema name** the caller asked for, which is how the crew is driven:
+    #: every agent uses the same model id and asks for a different structured output, so the
+    #: schema is the only thing that identifies which agent is speaking. Order-independent,
+    #: which matters because two pairs of agents run in parallel.
+    by_schema: dict[str, Any] = field(default_factory=dict)
     default: Any = None
     models: set[str] = field(default_factory=set)
     latency_ms: int = 11
+    #: Awaited at the *start* of every call, with the schema name. The only way to observe
+    #: concurrency from outside: a test can make two calls wait for each other here, which a
+    #: sequential implementation cannot satisfy.
+    before: Any = None
     #: Raised by `available_models()`. Used for the boot check's degraded path.
     list_error: Exception | None = None
     calls: list[RecordedCall] = field(default_factory=list)
@@ -325,7 +445,13 @@ class MockGroqProvider:
             )
         )
 
-        entry = self.script.get(model, self.default)
+        schema_name = getattr(schema, "name", None)
+        if self.before is not None:
+            await self.before(schema_name)
+        if schema_name in self.by_schema:
+            entry = self.by_schema[schema_name]
+        else:
+            entry = self.script.get(model, self.default)
         if isinstance(entry, list):
             if not entry:
                 raise AssertionError(f"mock script for {model} is exhausted")
@@ -336,7 +462,9 @@ class MockGroqProvider:
         if isinstance(value, Exception):
             raise value
         if value is None:
-            raise AssertionError(f"mock has no scripted response for model {model}")
+            raise AssertionError(
+                f"mock has no scripted response for model {model} / schema {schema_name}"
+            )
 
         return ChatResult(
             content=value,
@@ -358,6 +486,11 @@ class MockGroqProvider:
     def models_called(self) -> list[str]:
         return [call.model for call in self.calls]
 
+    @property
+    def schemas_called(self) -> list[str]:
+        """Which structured output each call asked for — the crew's running order."""
+        return [call.schema_name for call in self.calls if call.schema_name]
+
 
 class FakeImageReferences:
     """A `ImageReferenceSource` that hands back an opaque, obviously-fake URL.
@@ -377,9 +510,12 @@ class FakeImageReferences:
 
 __all__ = [
     "FIXTURES",
+    "UNSET",
     "CollectingGenerationLog",
+    "CollectingTrendLog",
     "FailingAdvisor",
     "FakeImageReferences",
+    "MockExaProvider",
     "MockGroqProvider",
     "RecordedCall",
     "ScriptedAdvisor",
@@ -389,5 +525,6 @@ __all__ = [
     "UnavailableTrendSource",
     "fixture",
     "garment",
+    "search_hit",
     "trend_note",
 ]

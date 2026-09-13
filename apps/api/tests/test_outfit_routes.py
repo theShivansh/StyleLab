@@ -18,7 +18,12 @@ import json
 import pytest
 
 from app.config import get_settings
-from tests.support import make_image
+from tests.support import load_from_tests_ai, make_image
+
+#: The crew's scripted answers, loaded at import time because `script_advice` is a plain
+#: helper called from other plain helpers — a fixture would have to be threaded through
+#: every one of them.
+crew_script = load_from_tests_ai("stylelab_crew_fixtures", "crew_fixtures.py").crew_script
 
 ROLES = ("top", "bottom", "footwear")
 
@@ -69,14 +74,20 @@ def wardrobe(api, stubs, wait_for_job):
 
 
 def script_advice(api, *, item_ids, **overrides) -> None:
-    """Script the text model with one advisory response naming these ids."""
-    payload: dict = {
-        "outfit": {
-            "item_ids": list(item_ids),
-            "name": "Quiet Navy",
-            "occasion": "everyday",
-            "match_score": 91,
-        },
+    """Script the **crew** with one advisory answer naming these ids.
+
+    Since S8b the API composes with `CrewAIOutfitAdvisor` (`app/main.py`), so a single-call
+    advisory payload here would be scripting a wiring the product no longer has. Every agent
+    uses the same model id and asks for a different structured output, so the script is keyed
+    by schema name — `tests/ai/crew_fixtures.py` holds a healthy run and this overrides the
+    two roles that decide the answer.
+
+    `overrides` land on the Editor, the agent whose output becomes the response.
+    """
+    editor: dict = {
+        "item_ids": list(item_ids),
+        "name": "Quiet Navy",
+        "occasion": "everyday",
         "rationale": ["The palette holds together."],
         "confidence": 0.84,
         "pro_tips": [
@@ -84,12 +95,20 @@ def script_advice(api, *, item_ids, **overrides) -> None:
         ],
         "budget_tricks": [],
         "wardrobe_gaps": [],
-        "trend_notes": [],
-        "missing_roles": [],
-        "degradation_level": 1,
+        "applied_trends": [],
     }
-    payload.update(overrides)
-    api.transport_double.script[get_settings().groq_text_model] = json.dumps(payload)
+    editor.update(overrides)
+    api.transport_double.by_schema = crew_script(
+        outfit_draft=json.dumps(
+            {
+                "item_ids": list(item_ids),
+                "name": "Quiet Navy",
+                "occasion": "everyday",
+                "rationale": ["The palette holds together."],
+            }
+        ),
+        editor_output=json.dumps(editor),
+    )
 
 
 def compose(api, caller, wait_for_job, **body) -> dict:

@@ -17,7 +17,7 @@ Update the row + commit BEFORE ending a session. Never delete rows.
 | S6 | Upload + analysis pipeline | 05 | done | (this commit) | L T U I E B AI | Live path verified end to end against real Groq on real photographs. EXIF+GPS strip, checksum cache, soft-delete cascade, signed image capabilities, named job stages. 8 mutations run. 424 api + 14 ai-eval + 8 live + 48 web tests. Found and fixed two S5 schema bugs no mock could see. |
 | S7 | Result + swap | 06 | done | (this commit) | L T U I E B AI | Compose is an async job, swap is synchronous and calls no model. Result screen, alternatives scored in the look, save, share-as-text. 9 mutations, 9 caught. 463 api + 14 ai-eval + 57 web unit + 54 e2e (desktop + mobile). Live: a real look composed from real photographs against Groq. Measured the account's output-token limit and opened B17. |
 | S8 | AI eval harness | 10 | done | (this commit) | L T U E B AI | Refusal harness a reviewer can drive (`python tests/ai/runner.py --response FILE`), 19 scenarios, and a case registry resolved against the repo. Found four real defects and fixed them: a fibre claim shown as fact, an unseen `style_tags` channel into the advice prompt, meaningless quality warnings, and no ceiling on a compose. Generation telemetry + the OBSERVABILITY metric rollup. 14 mutations, 13 caught first pass, 1 survived and was killed. 486 api + 72 ai-eval + 59 web unit + 56 e2e. |
-| S8b | Agent crew + trends | 14 | todo | — | — | multi-agent advisory layer |
+| S8b | Agent crew + trends | 14 | done | (this commit) | L T U E B AI | Six-role CrewAI crew on our own transport (`crewai.BaseLLM`), so the whole crew runs with no API key. Live trend grounding via Exa behind a `SearchTransport` seam; the committed corpus was dropped rather than built. Self-evaluating Critic with a bounded revision loop, latency circuit breaker, and the ablation test — **B8 and B11 closed**. Found that an advisor could invent a trend citation and nothing stopped it. 24/25 eval cases covered, 0 deferred. 17 mutations, 16 caught first pass. 522 api + 107 ai-eval + 60 web unit + 58 e2e. Live: a real look from the full crew, all six strict schemas accepted, 11.7s for five agents. |
 | S9 | Planner + analytics | 07 | todo | — | — | P1, cuttable |
 | S10 | Recruiter demo | 11 | todo | — | — | |
 | S11 | Harden + deploy | 08 | todo | — | — | |
@@ -74,11 +74,20 @@ key, so it is a local-and-main gate rather than a per-push one.
       `git add -A`.)
 - [x] B9 — RESOLVED in S1. Pinned to 3.11 in CI and locally; 3.12 was never installed and
       installing it is a system change. See docs/DECISIONS.md.
-- [ ] B8 — Trend corpus (data/trends/) not yet assembled. Each entry needs source +
-      published_at. Without it the Trend Scout is skipped (degradation level 2).
-- [ ] B11 — CI job `ai-eval` step 2 runs `pytest tests/ai/test_ablation.py`, which does not
-      exist until S8b. Step 1 is green as of S4. Deliberately not stubbed: an ablation test
-      that cannot fail is worthless (Case 21). The job stays red until S8b lands.
+- [x] B8 — CLOSED 2026-09-13, by deciding not to build it. The blocker was "assemble a
+      trend corpus", and it stayed open from S1 because assembling one was never obviously
+      worth doing: a hand-curated `data/trends/` is a snapshot of what somebody believed on
+      the day they wrote it, it goes stale silently, and to a reader it is indistinguishable
+      from model recall — the exact thing the trend rule exists to prevent. Replaced by live
+      retrieval with a date filter and an editorial domain allow-list (`ExaTrendSource`).
+      What is now open in its place is operational, not architectural: **`EXA_API_KEY` must
+      be set** or the Trend Scout is skipped and every composition reports degradation 2.
+      Outfits are unaffected either way.
+- [x] B11 — CLOSED 2026-09-13. `tests/ai/test_ablation.py` exists and passes: eleven tests,
+      every ablatable role checked against the specific contribution it exists to make, and
+      the two load-bearing roles refusing to be ablated at all. Open from S4 to S8b and
+      deliberately never stubbed — a placeholder that cannot fail converts "we have not
+      checked" into "we have checked". Every role earned its place; nobody was deleted.
 - [ ] B12 — No migrations. `Base.metadata.create_all` covers tests and local work only;
       Alembic (or Supabase migrations) lands with deployment in S11. Until then the schema
       only exists where someone has run create_all. S6 made the local default concrete: an
@@ -107,11 +116,26 @@ key, so it is a local-and-main gate rather than a per-push one.
            Recorded in docs/DECISIONS.md so nobody repeats it. **Closed as a wrong turn.**
         2. `tests/live/` paces its vision-heavy modules and skips on a capacity refusal
            rather than failing, since a rate limit is not evidence about our schema. **Done.**
-        3. Still open: the documented primary flow uploads three to six photographs in one
+        3. S8b measured the text side too, and it binds the same way. One crew composition
+           costs ~7,600 input tokens against the 8,000 input-TPM ceiling, so a second compose
+           inside the same minute is throttled by arithmetic: per-agent latency goes from
+           1.7-3.1s on a fresh window to 13-26s on a spent one, all of it backoff. The
+           circuit breaker handles it correctly — two composes over budget and the crew drops
+           to Architect + Editor with the depth disclosed — but a demo that composes twice in
+           a minute will visibly get shallower. Same decision as below: a paid tier, or pace
+           the demo.
+        4. Still open: the documented primary flow uploads three to six photographs in one
            gesture, concurrently, and on this tier some of those calls are refused. The
            product degrades correctly (per-card failure, retry offered, honest gap) but the
            experience is worse than it should be. Either a paid tier or client-side batching
            of concurrent uploads — decide before the demo (B6).
+- [ ] B19 — CrewAI costs ~13 seconds to import, which is now the floor on any test session
+      that touches the crew. Contained rather than solved: nothing outside
+      `app/adapters/crew*.py` and the two crew test files imports it, and `app/main.py`
+      imports it inside the lifespan rather than at module scope, so `pytest tests/ai -q`
+      stays under five seconds for the 100-odd tests that do not need a crew. Worth revisiting
+      only if the framework starts earning less than it costs — the ablation test is the thing
+      that would say so.
 - [ ] B18 — Free-text extraction fields can still carry a description of the person in the
       photograph. S8 closed the channel that mattered most: `style_tags` is a closed
       vocabulary now, because it is never rendered to the user and *is* interpolated into the

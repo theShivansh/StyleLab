@@ -34,6 +34,7 @@ from harness import (
     VISION_MODEL,
     analyzer,
     stack,
+    supplied_trend_source,
     wardrobe,
 )
 from stubs import SlowAdvisor, fixture
@@ -331,15 +332,26 @@ async def unsafe_tips() -> Check:
 @scenario("16", "a trend note about a garment the user does not own")
 async def trend_names_unowned() -> Check:
     """A note is context, not a slot, so it is dropped rather than fatal — but it must not
-    imply the user owns the thing it is about."""
-    with wardrobe() as repo, stack(repo, fixture("advice_trend_unowned.json")) as s:
+    imply the user owns the thing it is about.
+
+    The same response also carries an **invented** note: a claim with a plausible magazine, a
+    plausible date and a working-looking link that the trend source never returned. That one
+    is dropped on provenance rather than on scope, and it is the more dangerous of the two —
+    model recall dressed as journalism (Case 15).
+    """
+    with wardrobe() as repo, stack(
+        repo, fixture("advice_trend_unowned.json"), trend_source=supplied_trend_source()
+    ) as s:
         advice = await s.service.compose(U1, occasion="everyday")
         kept = [note.trend for note in advice.trend_notes]
         return Check(
             case="16",
             name="a trend note about a garment the user does not own",
-            injected="two notes, one applying to 'not-owned' and one to own-top",
-            expected="the unowned note is dropped, the outfit is untouched",
+            injected=(
+                "three notes: one applying to 'not-owned', one to own-top, and one the "
+                "trend source never supplied"
+            ),
+            expected="only the owned, sourced note survives",
             observed=f"kept {kept}",
             held=kept == ["Neutral palettes holding through AW26"] and advice.outfit is not None,
         )
