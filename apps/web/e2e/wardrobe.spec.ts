@@ -177,6 +177,59 @@ test("@critical a low-confidence field is hedged, and correcting it settles it",
   await expect(card.getByText("black")).toHaveCount(0);
 });
 
+test("the material reads as a guess even when the model is certain", async ({ page }) => {
+  // AI-EVAL-CASES Case 08, Fail clause: an unhedged claim about fibre content. S8's eval
+  // harness caught the card rendering "100% merino wool" at 0.99 as a settled attribute.
+  // A photograph cannot show what a garment is made of at any confidence.
+  await stubSession(page);
+  await page.route("**/api/v1/wardrobe/items", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await route.fulfill({
+      json: {
+        items: [{ item_id: "item_1", asset_id: "a1", job_id: "job_1", status: "analyzing" }],
+      },
+    });
+  });
+  await page.route("**/api/v1/jobs/*", (route) =>
+    route.fulfill({
+      json: { job_id: "job_1", type: "analyze_item", status: "completed", stage: null, progress: 1 },
+    }),
+  );
+  await page.route("**/api/v1/wardrobe/items/*", async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    return route.fulfill({
+      json: itemPayload({
+        color_primary: "charcoal",
+        material_guess: "100% merino wool",
+        // Every field well above the floor, material included.
+        field_confidence: {
+          category: 0.98,
+          subcategory: 0.94,
+          color_primary: 0.93,
+          material_guess: 0.99,
+          fit: 0.91,
+        },
+        quality_warnings: [],
+      }),
+    });
+  });
+
+  await page.goto("/wardrobe");
+  await pick(page, [{ name: "knit.png", mimeType: "image/png", buffer: PNG }]);
+
+  const card = page.locator('section[aria-label="Wardrobe"] li').first();
+  await expect(card).toBeVisible({ timeout: 15_000 });
+
+  const material = card.locator("div", { hasText: /^Material/ }).last();
+  await expect(material.getByText("100% merino wool")).toBeVisible();
+  await expect(material.getByText("best guess")).toBeVisible();
+
+  // And it is one field, not a blanket hedge: the colour is confident and reads as settled.
+  const colour = card.locator("div", { hasText: /^Colour/ }).last();
+  await expect(colour.getByText("charcoal")).toBeVisible();
+  await expect(colour.getByText("best guess")).toHaveCount(0);
+});
+
 test("@critical wardrobe survives navigation", async ({ page }) => {
   await stubHappyPath(page, 1);
   await page.goto("/wardrobe");

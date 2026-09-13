@@ -89,12 +89,15 @@ export function GarmentCard({
                 <dt className="text-ink-muted">{label}</dt>
                 <dd className="flex items-center gap-2">
                   <span className={cn(hedged && "text-ink-muted")}>{value}</span>
+                  {/* `whitespace-nowrap`: the value wraps, the label must not. Since S8 the
+                      material is always hedged, so this chip sits beside a long value on
+                      almost every card and was breaking across two lines inside its pill. */}
                   {corrected ? (
-                    <Chip tone="accent" className="px-2 py-0.5 text-[10px]">
+                    <Chip tone="accent" className="px-2 py-0.5 text-[10px] whitespace-nowrap">
                       you set this
                     </Chip>
                   ) : hedged ? (
-                    <Chip tone="hedged" className="px-2 py-0.5 text-[10px]">
+                    <Chip tone="hedged" className="px-2 py-0.5 text-[10px] whitespace-nowrap">
                       best guess
                     </Chip>
                   ) : null}
