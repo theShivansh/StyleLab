@@ -1026,6 +1026,12 @@ served rung 1: 29.4s with a Critic rebuild, 18.8s without. So `AGENT_LATENCY_BUD
 because the run that rebuilt finished under a second from losing everything. The web client
 already waited ~60s for a composition.
 
+Verified on the deployed site after the release: two back-to-back composes both came from the
+crew — pro tips, dated trend notes, a wardrobe gap — at rung 3, the second in about 11s. Rung 3
+rather than 1 means a rebuild was skipped for time or an optional role was left out; the log
+line says which (`crew rebuild skipped` or `crew role ... failed and was left out`). Before
+this release the same second compose served the ranker.
+
 **Three more defects, found by walking the deployed site rather than by any test.**
 - A photo read the provider refused as schema-invalid was classified as a refusal, so the card
   said "We couldn't reach the model service" and offered no retry. It is `EXTRACTION_FAILED` and
