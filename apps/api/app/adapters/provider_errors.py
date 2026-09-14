@@ -35,6 +35,9 @@ class ProviderError(Exception):
     retryable = False
     #: Whether the availability fallback model should be tried. Availability only.
     use_fallback_model = False
+    #: The provider's own error code — a short identifier such as `json_validate_failed` — when
+    #: it sent one. Set by the transport for the log line, and never a message.
+    provider_code: str | None = None
 
     def __init__(self, message: str, *, model: str | None = None) -> None:
         super().__init__(message)
@@ -98,6 +101,21 @@ class ProviderRefusedError(ProviderError):
     use_fallback_model = False
 
 
+class ProviderOutputInvalidError(ProviderRefusedError):
+    """The provider generated an answer, then refused it for not matching the schema.
+
+    Groq's `json_validate_failed`. A 400, but not a malformed request: the request was fine and
+    the *generation* was not — under a strict schema almost always because the output ceiling
+    cut the JSON off before it closed. The deployed crew's first failure, logged for hours as a
+    generic refusal.
+
+    A subclass of `ProviderRefusedError` so everything that already handles a refusal still
+    does. Kept distinguishable because the fix differs: a refusal is ours to correct, and this
+    is worth one retry with more room, which `crew_llm.TransportLLM` makes. Not retried at the
+    transport with the same ceiling — that is truncated the same way and spends the quota twice.
+    """
+
+
 class ProviderContractError(ProviderError):
     """A 200 whose body was not the shape the API documents.
 
@@ -115,6 +133,7 @@ __all__ = [
     "ProviderContractError",
     "ProviderError",
     "ProviderModelMissingError",
+    "ProviderOutputInvalidError",
     "ProviderRateLimitedError",
     "ProviderRefusedError",
     "ProviderTimeoutError",

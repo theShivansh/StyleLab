@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import time
 from typing import Any
 
@@ -39,6 +40,7 @@ from app.adapters.provider_errors import (
     ProviderContractError,
     ProviderError,
     ProviderModelMissingError,
+    ProviderOutputInvalidError,
     ProviderRateLimitedError,
     ProviderRefusedError,
     ProviderTimeoutError,
@@ -65,11 +67,36 @@ def _sanitised(error: Exception) -> str:
     return f"{type(error).__name__} from the model provider"
 
 
-def _map_error(error: Exception, *, model: str) -> ProviderError:
-    """Vendor exception to our taxonomy.
+#: What a provider error code looks like when it is safe to log: a short identifier.
+_CODE_SHAPE = re.compile(r"^[a-z0-9_]{1,64}$")
 
-    Ordered most specific first. `NotFoundError` is the deprecation case and the reason the
-    fallback model exists at all.
+
+def _provider_code(error: Exception) -> str | None:
+    """The provider's own error code, when it sent one. Never its message.
+
+    The message can quote the request, and a `json_validate_failed` body carries the model's
+    whole failed generation beside it. The code is an identifier: it says *why* in a word that
+    cannot hold a user's text — which is what the production log was missing while every crew
+    refusal read "BadRequestError from the model provider". Anything that is not shaped like an
+    identifier is dropped rather than trusted to be one.
+    """
+    body = getattr(error, "body", None)
+    detail = body.get("error", body) if isinstance(body, dict) else None
+    code = detail.get("code") if isinstance(detail, dict) else None
+    return code if isinstance(code, str) and _CODE_SHAPE.match(code) else None
+
+
+def _map_error(error: Exception, *, model: str) -> ProviderError:
+    """Vendor exception to our taxonomy, carrying the provider's code for the log."""
+    mapped = _classify(error, model=model)
+    mapped.provider_code = _provider_code(error)
+    return mapped
+
+
+def _classify(error: Exception, *, model: str) -> ProviderError:
+    """Ordered most specific first.
+
+    `NotFoundError` is the deprecation case and the reason the fallback model exists at all.
     """
     if isinstance(error, groq.APITimeoutError):
         return ProviderTimeoutError(_sanitised(error), model=model)
@@ -81,6 +108,8 @@ def _map_error(error: Exception, *, model: str) -> ProviderError:
         return ProviderModelMissingError(f"model {model} did not resolve", model=model)
     if isinstance(error, groq.AuthenticationError | groq.PermissionDeniedError):
         return ProviderRefusedError("the provider rejected our credentials", model=model)
+    if isinstance(error, groq.BadRequestError) and _provider_code(error) == "json_validate_failed":
+        return ProviderOutputInvalidError(_sanitised(error), model=model)
     if isinstance(error, groq.BadRequestError | groq.UnprocessableEntityError):
         return ProviderRefusedError(_sanitised(error), model=model)
     if isinstance(error, groq.APIConnectionError | groq.InternalServerError):
@@ -161,6 +190,7 @@ class GroqChatTransport:
         schema: SchemaSpec | None = None,
         timeout_s: float | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatResult:
         payload: dict[str, Any] = {
             "model": model,
@@ -171,6 +201,10 @@ class GroqChatTransport:
             payload["response_format"] = response_format
         if max_tokens is not None:
             payload["max_completion_tokens"] = max_tokens
+        if reasoning_effort is not None:
+            # Through `extra_body`: the SDK's type for this field predates the values the
+            # reasoning models accept, and the API takes them either way.
+            payload["extra_body"] = {"reasoning_effort": reasoning_effort}
         if timeout_s is not None:
             payload["timeout"] = timeout_s
 
@@ -188,12 +222,18 @@ class GroqChatTransport:
                     raise mapped from error
 
                 delay = self._backoff(attempt, mapped)
+                # The codes are in the message as well as `extra`, because the deployed log
+                # shows the message and nothing else.
                 logger.info(
-                    "provider call failed; retrying",
+                    "provider call failed; retrying (code=%s provider_code=%s attempt=%d)",
+                    mapped.code,
+                    mapped.provider_code or "-",
+                    attempt,
                     extra={
                         "model": model,
                         "attempt": attempt,
                         "code": mapped.code,
+                        "provider_code": mapped.provider_code,
                         "delay_s": round(delay, 3),
                     },
                 )
@@ -238,8 +278,16 @@ class GroqChatTransport:
 
     def _log_failure(self, error: ProviderError, *, model: str, attempt: int) -> None:
         logger.warning(
-            "provider call failed",
-            extra={"model": model, "attempts": attempt, "code": error.code},
+            "provider call failed (code=%s provider_code=%s attempts=%d)",
+            error.code,
+            error.provider_code or "-",
+            attempt,
+            extra={
+                "model": model,
+                "attempts": attempt,
+                "code": error.code,
+                "provider_code": error.provider_code,
+            },
         )
 
     @staticmethod

@@ -223,6 +223,11 @@ class CompositionService:
         if dropped:
             logger.info("dropped unsupportable advisory content", extra={"dropped": dropped})
 
+        # The advisor may have run below rung 1 on its own: a reduced crew, a role that failed
+        # and was left out, a rebuild there was no time for. This used to report only the trend
+        # lookup's rung, which overwrote the advisor's — so a crew serving without its Critic
+        # said "full crew" on screen. Capped at 3: rungs 4 and 5 are this service's to declare.
+        degradation = max(degradation, min(advice.degradation_level, 3))
         self._emit("ok", request, degradation=degradation)
         return self._rescore(cleaned, request, degradation)
 

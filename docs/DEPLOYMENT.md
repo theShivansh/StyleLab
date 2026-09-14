@@ -71,6 +71,7 @@ TREND_MAX_AGE_DAYS=120             # articles older than this are dropped
 # Agents
 AGENT_LATENCY_BUDGET_MS=15000
 AGENT_MAX_OUTPUT_TOKENS=800
+AGENT_REASONING_EFFORT=low         # agents only; the provider default truncated the crew's JSON
 AGENT_TREND_SCOUT_ENABLED=true
 
 # Uploads

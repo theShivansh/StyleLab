@@ -557,3 +557,56 @@ test("@critical a poll that reaches another API instance still finishes the card
   await expect(page.getByText("oxford shirt").first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("That item isn't in your wardrobe.")).toHaveCount(0);
 });
+
+test("@critical one upload is one session, even when the browser refuses to store it", async ({
+  page,
+}) => {
+  /**
+   * The second defect the live deployment found, read off the API's access log: a
+   * `POST /session` before the upload, before its job poll and before the garment re-read.
+   * The session token had no copy but localStorage, so in a browser that refused storage each
+   * request belonged to a new user — and the card said the garment was not in the wardrobe.
+   */
+  await page.addInitScript(() => {
+    const key = "stylelab-session-token";
+    const proto = Storage.prototype;
+    const { getItem, setItem, removeItem } = proto;
+    const refuse = () => new DOMException("The operation is insecure.", "SecurityError");
+    proto.getItem = function (this: Storage, name: string) {
+      if (name === key) throw refuse();
+      return getItem.call(this, name);
+    };
+    proto.setItem = function (this: Storage, name: string, value: string) {
+      if (name === key) throw refuse();
+      setItem.call(this, name, value);
+    };
+    proto.removeItem = function (this: Storage, name: string) {
+      if (name === key) throw refuse();
+      removeItem.call(this, name);
+    };
+  });
+
+  let sessions = 0;
+  await page.route("**/api/v1/session", (route) => {
+    sessions += 1;
+    return route.fulfill({
+      status: 201,
+      json: { user_id: `user_${sessions}`, token: `token-${sessions}`, expires_in: 2_592_000 },
+    });
+  });
+
+  const credentials = new Set<string>();
+  page.on("request", (request) => {
+    if (!request.url().includes("/api/v1/") || request.url().endsWith("/session")) return;
+    const header = request.headers()["authorization"];
+    if (header) credentials.add(header);
+  });
+
+  await stubHappyPath(page, 1);
+  await page.goto("/wardrobe");
+  await pick(page, [{ name: "shirt.png", mimeType: "image/png", buffer: PNG }]);
+
+  await expect(page.getByText("oxford shirt").first()).toBeVisible({ timeout: 15_000 });
+  expect(sessions).toBe(1);
+  expect([...credentials]).toEqual(["Bearer token-1"]);
+});

@@ -114,13 +114,57 @@ describe("sessionToken", () => {
   });
 });
 
+describe("one identity for the whole page", () => {
+  function blockStorage() {
+    // What a browser with site storage disabled does: throw on every access.
+    const refuse = () => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    };
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(refuse);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(refuse);
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(refuse);
+  }
+
+  it("keeps the same token for every request when storage is unavailable", async () => {
+    // The deployed site's bug, as the API's access log recorded it: a `POST /session` before
+    // the upload, another before its job poll, another before the garment re-read — three
+    // users, and a card that blamed the garment. Storage was the only copy of the token.
+    blockStorage();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(mockSessionResponse("tok-1"))
+      .mockResolvedValue(mockSessionResponse("tok-should-never-be-minted"));
+
+    const upload = await sessionToken();
+    const poll = await sessionToken();
+    const reread = await sessionToken();
+
+    expect([upload, poll, reread]).toEqual(["tok-1", "tok-1", "tok-1"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads storage once, then keeps using what it found", async () => {
+    localStorage.setItem(KEY, "tok-existing");
+    expect(await sessionToken()).toBe("tok-existing");
+
+    // Something else clears storage mid-page. This page's identity does not change with it.
+    localStorage.removeItem(KEY);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    expect(await sessionToken()).toBe("tok-existing");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("renewSession", () => {
-  it("discards the stored token and gets a new one", async () => {
+  it("discards the refused token and gets a new one", async () => {
     localStorage.setItem(KEY, "tok-stale");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(mockSessionResponse("tok-fresh"));
 
-    expect(await renewSession()).toBe("tok-fresh");
+    expect(await sessionToken()).toBe("tok-stale");
+    expect(await renewSession("tok-stale")).toBe("tok-fresh");
     expect(localStorage.getItem(KEY)).toBe("tok-fresh");
+    expect(await sessionToken()).toBe("tok-fresh");
   });
 
   it("is what a 401 needs after the API restarts", async () => {
@@ -130,6 +174,40 @@ describe("renewSession", () => {
     localStorage.setItem(KEY, "tok-signed-by-the-old-process");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(mockSessionResponse("tok-new-process"));
 
-    expect(await renewSession()).toBe("tok-new-process");
+    expect(await renewSession("tok-signed-by-the-old-process")).toBe("tok-new-process");
+  });
+
+  it("starts exactly one new session when several requests are refused together", async () => {
+    // A cold screen sends its requests at once, so a stale token is refused several times at
+    // once. One new identity, shared — not one per refusal with the last writer winning.
+    localStorage.setItem(KEY, "tok-stale");
+    await sessionToken();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(mockSessionResponse("tok-new"));
+
+    const renewed = await Promise.all([
+      renewSession("tok-stale"),
+      renewSession("tok-stale"),
+      renewSession("tok-stale"),
+    ]);
+
+    expect(renewed).toEqual(["tok-new", "tok-new", "tok-new"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace a token that was already replaced", async () => {
+    // A refusal that lands after another request finished renewing is about the old token.
+    // Renewing again would move this page to a third user and orphan the second's uploads.
+    localStorage.setItem(KEY, "tok-stale");
+    await sessionToken();
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(mockSessionResponse("tok-new"))
+      .mockResolvedValue(mockSessionResponse("tok-third-user"));
+
+    expect(await renewSession("tok-stale")).toBe("tok-new");
+    expect(await renewSession("tok-stale")).toBe("tok-new");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

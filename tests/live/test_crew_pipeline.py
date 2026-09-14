@@ -67,6 +67,7 @@ async def test_the_crew_composes_a_real_look_and_every_agent_schema_holds(
         model=settings.groq_text_model,
         roles=CrewRoles(trend_scout=False),
         max_tokens=settings.agent_max_output_tokens,
+        reasoning_effort=settings.agent_reasoning_effort,
     )
     request = AdviceRequest(
         user_id="live",
@@ -130,6 +131,7 @@ async def test_the_editor_has_room_to_finish_its_answer(transport, settings):
         model=settings.groq_text_model,
         roles=CrewRoles.architect_and_editor_only(),
         max_tokens=settings.agent_max_output_tokens,
+        reasoning_effort=settings.agent_reasoning_effort,
     )
     request = AdviceRequest(
         user_id="live",

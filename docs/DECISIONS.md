@@ -955,6 +955,76 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-14 — Three users per upload, and a crew that never ran
+
+Context:
+With `JOB_BACKEND=database` set, uploads on the deployed site still failed with "That item isn't
+in your wardrobe", and every composition — the owner's screenshot showed Style Match 93 and
+"Styled by the ranker rather than the advisory crew" — was served by the deterministic ranker.
+The owner supplied both logs. Both defects were reproduced against production before either was
+fixed.
+
+**Uploads: identity, not jobs.** The API's access log had no 401 in it at all. It had a
+`POST /session` before the upload, another before the job poll (404) and another before the
+garment re-read (404): each request belonged to a new anonymous user, so each one was correctly
+refused the previous one's garment. `lib/session.ts` held the token in localStorage and nowhere
+else, and its own comment — "a session per page load still works" — was wrong: with storage
+refused there was no copy at all, and every request started a session. Why the owner's browser
+refused storage is not known; private modes, strict tracking protection and embedded browsers
+all can, and the code must not depend on it. Reproduced on the live site by making storage throw
+for that one key.
+
+A second defect of the same shape, found in review: `renewSession` discarded the in-flight
+promise, so several requests refused together minted one identity each, and the last to finish
+won storage.
+
+Fixed by holding the token in memory for the life of the page and treating storage as the way an
+identity survives a reload, not where the page keeps it; and by renewing once per refused token —
+a caller whose refused token has already been replaced gets the replacement. Authentication is
+unchanged: the API still decides, and the browser still cannot choose who it is.
+
+**The crew: two causes, both invisible to every existing test.**
+
+1. The Trend Scout runs only when a real search returns articles. No live test had arranged that
+   — `tests/live/test_crew_pipeline.py` turns the scout off. In production it ran on every compose
+   at 600 output tokens (0.75 of 800), reasoned into the ceiling, and Groq refused the truncated
+   JSON with `json_validate_failed`. The code then did the opposite of what AGENT-SYSTEM.md
+   documented: one optional agent's refusal ended the crew. The log could not say any of this;
+   every refusal read "BadRequestError from the model provider".
+2. With the scout fixed, the crew still overran. The account allows 8,000 tokens per minute on
+   the text model and counts each request's input plus its *requested* ceiling. One composition
+   needed about 13k. Measured runs: 83s at the default reasoning effort, 48.5s at `low` with a
+   Critic rebuild, against a 15s budget whose overrun discards everything.
+
+Fixed, each with a test that fails without it:
+- `AGENT_REASONING_EFFORT=low` for agents only. Output fell to about half and truncation stopped.
+- The provider's error code — an identifier, never its message or the failed generation — in the
+  log line. `json_validate_failed` is its own error type, still a refusal to existing handlers.
+- A truncated answer gets one retry with twice the ceiling. CrewAI's default two re-runs of a
+  failed task are off: each was a whole call against the same minute.
+- Optional roles fail onto the documented rung (scout 2, deliberating roles 3). The Architect and
+  the Editor stay required.
+- A rebuild starts only inside the first third of the budget; otherwise it is skipped and rung 3
+  is disclosed. A rebuild that fails keeps the first draft.
+- CrewAI pastes each task's whole JSON Schema into the prompt, class docstrings included, while the
+  same schema goes to the provider as strict structured output. Stripped. Handoffs are compact.
+- Found on the way: `CompositionService` overwrote the advisor's rung with the trend lookup's, so
+  rung 3 — the circuit breaker's — had never been shown to anyone.
+
+Result, live, production-shaped (six agents, eight real Exa articles, real wiring): 8.1s, no
+refusals. The Style Profiler's prompt went from 3,200 to 1,724 characters.
+
+Deliberately not changed:
+- The 15s budget. At `low` it holds on a free minute; a second compose inside the same minute will
+  still trip the breaker and serve rung 3, which is the ladder working. The tier is blocker B17.
+- Reasoning effort for extraction. Nothing measured says it is wrong, and vision is the product's
+  front door.
+
+The lesson worth keeping: a live test that switches a role off to save a key has stopped testing
+the configuration that ships. The scout was the one agent production always ran and CI never did.
+
+---
+
 ### 2026-09-14 — The deployed site's first bug: a running job reported as a missing garment
 
 Context:

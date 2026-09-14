@@ -276,6 +276,10 @@ def create_app(
                 app.state.transport,
                 model=settings.groq_text_model,
                 max_tokens=settings.agent_max_output_tokens,
+                reasoning_effort=settings.agent_reasoning_effort,
+                # Read by the crew for one decision: whether a Critic-driven rebuild can still
+                # finish inside the budget, or would overrun it and cost the whole crew.
+                latency_budget_s=settings.agent_latency_budget_ms / 1000,
             ),
             jobs=app.state.jobs,
             background=app.state.background,

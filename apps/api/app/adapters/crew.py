@@ -50,9 +50,9 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypeVar
 
 # CrewAI's usage telemetry and trace uploader are switched off in `app/adapters/__init__.py`,
 # which runs before this module can import the framework. See the note there: it is a privacy
@@ -72,7 +72,7 @@ from app.adapters.crew_contracts import (
     TrendApplication,
 )
 from app.adapters.crew_llm import TransportLLM
-from app.adapters.provider_errors import ProviderError
+from app.adapters.provider_errors import ProviderError, ProviderOutputInvalidError
 from app.adapters.transport import ChatResult, ChatTransport
 from app.domain.errors import SchemaInvalidError
 from app.domain.models import (
@@ -88,6 +88,8 @@ from app.domain.models import (
 
 logger = logging.getLogger("stylelab.crew")
 
+_T = TypeVar("_T")
+
 #: The roles that run at composition time. The Wardrobe Analyst is role 1 and runs at upload.
 ROLES: tuple[str, ...] = (
     "style_profiler",
@@ -102,6 +104,21 @@ ROLES: tuple[str, ...] = (
 #: of a product — there would be no outfit and nothing to return it in.
 REQUIRED_ROLES: frozenset[str] = frozenset({"outfit_architect", "editor"})
 
+#: The rung a composition drops to when an optional role fails and is left out
+#: (docs/AGENT-SYSTEM.md). Losing the Trend Scout is rung 2 by definition; losing a deliberating
+#: role is a shorter round of reasoning, which is what rung 3 discloses.
+DROPPED_ROLE_RUNG: dict[str, int] = {
+    "style_profiler": 3,
+    "trend_scout": 2,
+    "critic": 3,
+    "practical_advisor": 3,
+}
+
+#: A Critic-driven rebuild is two more calls and then the Editor. Started later than this share
+#: of the latency budget it does not finish inside it — and an overrun discards the whole crew,
+#: first draft included, for the ranker.
+REVISION_CUTOFF = 1 / 3
+
 #: Output ceiling per role, as a multiple of `AGENT_MAX_OUTPUT_TOKENS`.
 #:
 #: One number for six agents was wrong in a way only a live run showed. Under strict
@@ -113,9 +130,16 @@ REQUIRED_ROLES: frozenset[str] = frozenset({"outfit_architect", "editor"})
 #:
 #: Measured, not guessed: at these ceilings a real run emits 416/480/516/800/655 tokens for
 #: profiler, architect, critic, advisor and editor respectively.
+#:
+#: The profiler and the scout were at 0.75 until the first deployed composition. The Trend Scout
+#: only runs when a real search returns articles, which no live test had arranged, and at 600
+#: tokens its answer was cut off often enough — 521 on a call that *succeeded* — for the provider
+#: to refuse it and the crew to fall to the ranker. `AGENT_REASONING_EFFORT=low` took the same two
+#: agents to about 200 tokens and `crew_llm` now retries a truncated answer with more room; the
+#: floor moved to 1.0 regardless, because with a strict schema a ceiling is a correctness setting.
 OUTPUT_BUDGET: dict[str, float] = {
-    "style_profiler": 0.75,
-    "trend_scout": 0.75,
+    "style_profiler": 1.0,
+    "trend_scout": 1.0,
     "outfit_architect": 1.0,
     "critic": 1.0,
     "practical_advisor": 1.25,
@@ -189,6 +213,10 @@ class CrewRun:
     revised: bool = False
     #: True when the revision scored worse and the first draft was kept.
     revision_rejected: bool = False
+    #: True when the Critic asked for a rebuild and it was not made — no time, or it failed.
+    revision_skipped: bool = False
+    #: Optional roles that failed and were left out, in the order they failed.
+    dropped_roles: list[str] = field(default_factory=list)
     degradation_level: int = 1
 
     @property
@@ -254,6 +282,10 @@ def _agent(role: str, goal: str, backstory: str, llm: TransportLLM) -> Agent:
         # latency budget.
         max_iter=1,
         cache=False,
+        # No blind re-runs. CrewAI re-executes a failed task twice by default, and every re-run
+        # is a whole agent call against a per-minute token limit: the deployed log shows one
+        # refusal nested three deep. Retrying is `TransportLLM`'s job — once, for a reason.
+        max_retry_limit=0,
     )
 
 
@@ -309,12 +341,18 @@ class CrewAIOutfitAdvisor:
         roles: CrewRoles | None = None,
         max_tokens: int | None = None,
         timeout_s: float | None = None,
+        reasoning_effort: str | None = None,
+        latency_budget_s: float | None = None,
     ) -> None:
         self._transport = transport
         self._model = model
         self._roles = roles or CrewRoles()
         self._max_tokens = max_tokens
         self._timeout_s = timeout_s
+        self._reasoning_effort = reasoning_effort
+        #: Not enforced here — `CompositionService` owns the deadline. Read for one decision:
+        #: whether a rebuild started now could still finish inside it.
+        self._latency_budget_s = latency_budget_s
         #: Read by `CompositionService` for its generation event. Set before parsing so it
         #: survives a failure.
         self.last_telemetry: AdviceTelemetry | None = None
@@ -341,6 +379,8 @@ class CrewAIOutfitAdvisor:
             roles=roles,
             max_tokens=self._max_tokens,
             timeout_s=self._timeout_s,
+            reasoning_effort=self._reasoning_effort,
+            latency_budget_s=self._latency_budget_s,
         )
         reduced._rung = degradation_level
         return reduced
@@ -351,7 +391,7 @@ class CrewAIOutfitAdvisor:
         started = time.perf_counter()
 
         try:
-            editor_output = await self._run(request, run, loop)
+            editor_output = await self._run(request, run, loop, started)
         finally:
             self.last_run = run
             self.last_telemetry = AdviceTelemetry(
@@ -368,15 +408,25 @@ class CrewAIOutfitAdvisor:
     # --- the phases -------------------------------------------------------------------------
 
     async def _run(
-        self, request: AdviceRequest, run: CrewRun, loop: asyncio.AbstractEventLoop
+        self,
+        request: AdviceRequest,
+        run: CrewRun,
+        loop: asyncio.AbstractEventLoop,
+        started: float,
     ) -> EditorOutput:
         wardrobe = _wardrobe_block(request.candidates)
         preferences = _preferences_block(request)
 
         # Phase 1 — Style Profiler ‖ Trend Scout. Genuinely concurrent.
         profile, trends = await asyncio.gather(
-            self._style_profile(request, wardrobe, preferences, run, loop),
-            self._trend_application(request, wardrobe, run, loop),
+            self._optional(
+                "style_profiler",
+                self._style_profile(request, wardrobe, preferences, run, loop),
+                run,
+            ),
+            self._optional(
+                "trend_scout", self._trend_application(request, wardrobe, run, loop), run
+            ),
         )
 
         # Phase 2 — the Architect.
@@ -386,17 +436,28 @@ class CrewAIOutfitAdvisor:
 
         # Phase 3 — Critic ‖ Practical Advisor.
         critique, practical = await asyncio.gather(
-            self._critic(request, wardrobe, draft, run, loop),
-            self._practical(request, wardrobe, draft, run, loop),
+            self._optional("critic", self._critic(request, wardrobe, draft, run, loop), run),
+            self._optional(
+                "practical_advisor", self._practical(request, wardrobe, draft, run, loop), run
+            ),
         )
 
         # Phase 4 — the reflexion loop, bounded.
         if critique is not None:
             run.score_before = critique.score
             if critique.score < REVISION_THRESHOLD and critique.objections:
-                draft, critique = await self._revise(
-                    request, wardrobe, preferences, profile, trends, draft, critique, run, loop
-                )
+                if self._can_afford_revision(started):
+                    draft, critique = await self._revise(
+                        request, wardrobe, preferences, profile, trends, draft, critique, run, loop
+                    )
+                else:
+                    # Disclosed: the Critic asked for more reasoning than the look received.
+                    run.revision_skipped = True
+                    run.degradation_level = max(run.degradation_level, 3)
+                    logger.info(
+                        "crew rebuild skipped; not enough of the latency budget left",
+                        extra={"score": critique.score},
+                    )
 
         # Phase 5 — the Editor.
         return await self._editor(
@@ -422,18 +483,28 @@ class CrewAIOutfitAdvisor:
         draft is kept: a loop that cannot reject its own output is not evaluating anything.
         """
         for _ in range(MAX_REVISIONS):
-            revised = await self._architect(
-                request,
-                wardrobe,
-                preferences,
-                profile,
-                trends,
-                run,
-                loop,
-                constraints=tuple(critique.objections),
-                revision=True,
+            try:
+                revised = await self._architect(
+                    request,
+                    wardrobe,
+                    preferences,
+                    profile,
+                    trends,
+                    run,
+                    loop,
+                    constraints=tuple(critique.objections),
+                    revision=True,
+                )
+            except (ProviderError, SchemaInvalidError):
+                # A first draft is in hand. A rebuild that failed is not a reason to throw it
+                # away for the ranker — but the look did get less reasoning than was asked for.
+                logger.warning("crew rebuild failed; keeping the first draft")
+                run.revision_skipped = True
+                run.degradation_level = max(run.degradation_level, 3)
+                return draft, critique
+            rejudged = await self._optional(
+                "critic", self._critic(request, wardrobe, revised, run, loop, revision=True), run
             )
-            rejudged = await self._critic(request, wardrobe, revised, run, loop, revision=True)
             run.revised = True
 
             if rejudged is None:
@@ -451,6 +522,44 @@ class CrewAIOutfitAdvisor:
             return revised, rejudged
 
         return draft, critique
+
+    async def _optional(self, role: str, work: Awaitable[_T], run: CrewRun) -> _T | None:
+        """Run an optional role. If it fails, leave it out, and say so on the rung.
+
+        docs/AGENT-SYSTEM.md has always said a Trend Scout provider failure costs a rung, not
+        the crew. The code did not: any agent's exception ended the run, so one refused call from
+        the scout — the first deployed composition's — served the ranker in place of five agents'
+        worth of work. Only the Architect and the Editor are required; nothing else is worth
+        discarding an outfit for.
+
+        The deadline is not caught here. A timeout or a cancellation belongs to
+        `CompositionService`, which is the layer that set it.
+        """
+        try:
+            return await work
+        except (ProviderError, SchemaInvalidError) as error:
+            run.dropped_roles.append(role)
+            run.degradation_level = max(run.degradation_level, DROPPED_ROLE_RUNG.get(role, 3))
+            reason = getattr(error, "provider_code", None) or type(error).__name__
+            logger.warning(
+                "crew role %s failed and was left out (%s); serving at degradation level %d",
+                role,
+                reason,
+                run.degradation_level,
+            )
+            return None
+
+    def _can_afford_revision(self, started: float) -> bool:
+        """Whether a rebuild started now can still finish inside the latency budget.
+
+        Always true with no budget, which is every test not about this. Measured on the deployed
+        account with low reasoning effort: the first three phases take about 4.5s on a free
+        minute, and the rebuild's two calls plus the Editor then waited 10-24s for the minute's
+        token budget — past a fifteen-second deadline that discards everything.
+        """
+        if self._latency_budget_s is None:
+            return True
+        return time.perf_counter() - started <= self._latency_budget_s * REVISION_CUTOFF
 
     # --- the agents ------------------------------------------------------------------------
 
@@ -722,6 +831,7 @@ class CrewAIOutfitAdvisor:
             max_tokens=self._budget_for(role),
             timeout_s=self._timeout_s,
             on_call=observe,
+            reasoning_effort=self._reasoning_effort,
         )
         llm.bind_loop(loop)
 
@@ -827,6 +937,10 @@ def _translated(error: Exception, role: str) -> Exception:
     outage, a cancelled budget — is already one of ours and is passed through untouched so
     the layer that classified it keeps its answer.
     """
+    if isinstance(error, ProviderOutputInvalidError):
+        # The provider refused the agent's own generation as schema-invalid — a schema failure
+        # in everything but name, and counted as one on the dashboard rather than as an outage.
+        return SchemaInvalidError(f"{role}: the provider rejected the answer as schema-invalid")
     if isinstance(error, ProviderError | TimeoutError | asyncio.CancelledError):
         return error
     if isinstance(error, ValidationError) or type(error).__name__ == "ConverterError":
@@ -835,7 +949,9 @@ def _translated(error: Exception, role: str) -> Exception:
 
 
 def _dump(model: BaseModel) -> str:
-    return json.dumps(model.model_dump(mode="json"), indent=2)
+    # Compact: indentation is tokens the next agent does not need, on a tier limited by tokens
+    # per minute.
+    return json.dumps(model.model_dump(mode="json"), separators=(",", ":"))
 
 
 def _parsed(output: Any, model: type[BaseModel]) -> Any:

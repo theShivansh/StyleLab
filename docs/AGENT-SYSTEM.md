@@ -173,13 +173,41 @@ without changing the result is decoration — delete it and say so in `DECISIONS
 
 Run the ablation before claiming multi-agent value to anyone.
 
+## Reasoning effort, and the budget that actually binds
+
+Agents run at `AGENT_REASONING_EFFORT=low`. Measured on the deployed account in S13c: at the
+model's default the crew emitted 473-876 output tokens per agent and the Trend Scout's answer
+was cut off by its ceiling. At `low` the production-shaped crew — six agents, eight real trend
+articles — emitted 183-949 per agent, was refused nothing, and finished in 8.1s.
+
+What decides whether a composition fits its budget is the account, not the model: 8,000 tokens
+per minute on the text model, counting each request's input **and** its requested output
+ceiling. So prompts carry no duplicated schema (CrewAI pastes one into every task; the provider
+already enforces it) and handoffs are compact JSON. A Critic-driven rebuild adds two calls and
+waits on the same minute, so it only starts inside the first third of the budget; later than
+that it is skipped, and the composition discloses rung 3.
+
 ## Failure and degradation
 
 1. full crew
 2. crew minus Trend Scout — no key, a provider failure, or nothing inside the date window
-3. Architect + Editor only — the latency circuit breaker has tripped
-4. deterministic ranker over the same wardrobe — the advisor failed or was refused
+3. a shorter round of reasoning — the latency circuit breaker has tripped (Architect + Editor
+   only), a deliberating role failed and was left out, or the Critic asked for a rebuild there
+   was no time for
+4. deterministic ranker over the same wardrobe — the Architect or the Editor failed, or the
+   crew overran its budget
 5. an honest statement of the gap
+
+Only the Architect and the Editor are required. Any other role that fails is left out and the
+composition is served on the rung that describes what is missing, rather than discarding the
+work of every role that did answer. Until S13c that sentence was true of this document and not
+of the code: one refused call from the Trend Scout sent every deployed composition to the
+ranker. A truncated answer (`json_validate_failed`) gets one retry with twice its output
+ceiling before a role counts as failed, and CrewAI's own re-runs are switched off.
+
+The rung is the crew's to report for 1-3 and the service's for 4-5. `CompositionService` takes
+the higher of the advisor's rung and the trend lookup's; before S13c it kept only the latter,
+and rung 3 had never reached a screen.
 
 Exercised end to end in `tests/ai/test_crew_ladder.py`, which also asserts the property that
 holds on every rung: **no depth of crew ever serves a garment the user does not own.**

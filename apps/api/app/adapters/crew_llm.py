@@ -40,12 +40,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Callable
 from typing import Any, ClassVar
 
 from crewai import BaseLLM
 from pydantic import BaseModel
 
+from app.adapters.provider_errors import ProviderOutputInvalidError
 from app.adapters.transport import ChatMessage, ChatResult, ChatTransport, SchemaSpec
 from app.domain.schemas import close_and_require
 
@@ -54,6 +56,16 @@ logger = logging.getLogger("stylelab.crew")
 #: Groq's context window for the text model, reported to CrewAI so it can bound its own
 #: prompt assembly. Not a model id and not a model choice — a number about the wire.
 CONTEXT_WINDOW_TOKENS = 128_000
+
+#: CrewAI's instruction block for a task with `output_pydantic`: the model's whole JSON Schema,
+#: pasted into the prompt, then its own formatting advice. Matched from its first sentence to its
+#: last, so a CrewAI release that rewords it degrades to sending it rather than to a cut prompt.
+_INLINED_SCHEMA = re.compile(
+    r"Format your final answer according to the following OpenAPI schema:.*?"
+    r"code block markers like ```json or ```python\.",
+    re.DOTALL,
+)
+_SCHEMA_ENFORCED = "Answer with one JSON object. Its schema is enforced by the API."
 
 
 class TransportLLM(BaseLLM):
@@ -76,6 +88,7 @@ class TransportLLM(BaseLLM):
         timeout_s: float | None = None,
         on_call: Callable[[ChatResult], None] | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(model=model, temperature=temperature)
         # Set through object.__setattr__ so this works whether BaseLLM is a pydantic model
@@ -85,6 +98,7 @@ class TransportLLM(BaseLLM):
         object.__setattr__(self, "_max_tokens", max_tokens)
         object.__setattr__(self, "_timeout_s", timeout_s)
         object.__setattr__(self, "_on_call", on_call)
+        object.__setattr__(self, "_reasoning_effort", reasoning_effort)
         object.__setattr__(self, "_loop", None)
 
     # --- lifecycle ------------------------------------------------------------------------
@@ -141,21 +155,48 @@ class TransportLLM(BaseLLM):
     async def _complete(
         self, messages: str | list[dict[str, str]], response_model: type[BaseModel] | None
     ) -> str:
-        transport: ChatTransport = self._transport  # type: ignore[attr-defined]
-        result = await transport.complete(
-            model=self.model,
-            messages=_as_chat_messages(messages),
-            schema=_schema_for(response_model),
-            timeout_s=self._timeout_s,  # type: ignore[attr-defined]
-            max_tokens=self._max_tokens,  # type: ignore[attr-defined]
-        )
+        schema = _schema_for(response_model)
+        chat = _as_chat_messages(messages, schema_enforced=schema is not None)
+        ceiling: int | None = self._max_tokens  # type: ignore[attr-defined]
+
+        try:
+            result = await self._send(chat, schema, ceiling)
+        except ProviderOutputInvalidError:
+            if ceiling is None:
+                raise
+            # The provider generated an answer and refused it as schema-invalid, which under a
+            # strict schema means the ceiling cut the JSON off before it closed. One retry with
+            # twice the room — not the transport's retry, which resends the same ceiling and is
+            # truncated the same way. Found live: the Trend Scout's ceiling was enough on most
+            # calls and not on all of them, and one refusal used to end the whole crew.
+            logger.info(
+                "agent answer was cut off by its output ceiling; retrying once with more room",
+                extra={"max_tokens": ceiling * 2},
+            )
+            result = await self._send(chat, schema, ceiling * 2)
+
         on_call = self._on_call  # type: ignore[attr-defined]
         if on_call is not None:
             on_call(result)
         return result.content
 
+    async def _send(
+        self, chat: list[ChatMessage], schema: SchemaSpec | None, ceiling: int | None
+    ) -> ChatResult:
+        transport: ChatTransport = self._transport  # type: ignore[attr-defined]
+        return await transport.complete(
+            model=self.model,
+            messages=chat,
+            schema=schema,
+            timeout_s=self._timeout_s,  # type: ignore[attr-defined]
+            max_tokens=ceiling,
+            reasoning_effort=self._reasoning_effort,  # type: ignore[attr-defined]
+        )
 
-def _as_chat_messages(messages: str | list[dict[str, str]]) -> list[ChatMessage]:
+
+def _as_chat_messages(
+    messages: str | list[dict[str, str]], *, schema_enforced: bool = False
+) -> list[ChatMessage]:
     """CrewAI's message shape to ours.
 
     CrewAI sends either a bare string or OpenAI-style `{role, content}` dicts. Content that
@@ -163,15 +204,31 @@ def _as_chat_messages(messages: str | list[dict[str, str]]) -> list[ChatMessage]
     how an agent comes to answer a question it was never fully asked.
     """
     if isinstance(messages, str):
-        return [ChatMessage.text("user", messages)]
+        return [ChatMessage.text("user", _without_inlined_schema(messages, schema_enforced))]
 
     converted: list[ChatMessage] = []
     for message in messages:
         role = str(message.get("role", "user"))
         content = message.get("content", "")
         body = content if isinstance(content, str) else json.dumps(content, default=str)
-        converted.append(ChatMessage.text(role, body))
+        converted.append(ChatMessage.text(role, _without_inlined_schema(body, schema_enforced)))
     return converted
+
+
+def _without_inlined_schema(text: str, schema_enforced: bool) -> str:
+    """Drop the JSON Schema CrewAI pastes into a prompt, when the provider enforces it anyway.
+
+    CrewAI writes the whole `output_pydantic` schema into the task prompt — class docstrings
+    included — while the same schema goes to the provider as strict structured output. Captured
+    from a live Editor call: most of a 6,425-character prompt was this block, and the docstring
+    `_without_docstrings` keeps out of the provider's schema was sitting in the prompt beside it.
+
+    On a tier limited by tokens per minute, a duplicated schema is latency. Only removed when a
+    schema is actually being enforced, so a call without one keeps its instructions.
+    """
+    if not schema_enforced:
+        return text
+    return _INLINED_SCHEMA.sub(_SCHEMA_ENFORCED, text)
 
 
 def _schema_for(response_model: type[BaseModel] | None) -> SchemaSpec | None:

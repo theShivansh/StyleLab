@@ -99,6 +99,15 @@ class Settings(BaseSettings):
     agent_framework: Literal["crewai"] = "crewai"
     agent_latency_budget_ms: int = 15_000
     agent_max_output_tokens: int = 800
+    #: How hard the text model reasons before it answers — for the crew's agents only.
+    #:
+    #: `low`, measured live on 2026-09-14 against the deployed account. The same six-agent crew
+    #: emitted 187-693 output tokens per agent instead of 473-876, and none was cut off. At the
+    #: provider's default the Trend Scout reasoned into its ceiling, the provider refused the
+    #: truncated JSON (`json_validate_failed`), and every deployed composition fell to the
+    #: ranker. These agents make short structured judgements over a handful of garments; the
+    #: deliberation that matters is between agents, not inside one. Extraction is unaffected.
+    agent_reasoning_effort: Literal["low", "medium", "high"] = "low"
     agent_trend_scout_enabled: bool = True
 
     # --- Trend source: Exa (docs/AGENT-SYSTEM.md) ---

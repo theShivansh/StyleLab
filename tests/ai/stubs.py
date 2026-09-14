@@ -363,6 +363,7 @@ class RecordedCall:
     schema_name: str | None
     timeout_s: float | None
     max_tokens: int | None
+    reasoning_effort: str | None = None
 
     @property
     def text(self) -> str:
@@ -432,6 +433,7 @@ class MockGroqProvider:
         schema: Any | None = None,
         timeout_s: float | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> Any:
         from app.adapters.transport import ChatResult
 
@@ -442,6 +444,7 @@ class MockGroqProvider:
                 schema_name=getattr(schema, "name", None),
                 timeout_s=timeout_s,
                 max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
             )
         )
 

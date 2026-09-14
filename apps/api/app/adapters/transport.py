@@ -104,8 +104,13 @@ class ChatTransport(Protocol):
         schema: SchemaSpec | None = None,
         timeout_s: float | None = None,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> ChatResult:
-        """Raises a `ProviderError` subclass, never a vendor exception."""
+        """Raises a `ProviderError` subclass, never a vendor exception.
+
+        `reasoning_effort` is a hint for reasoning models (`low`, `medium`, `high`). `None`
+        leaves the provider's default, which is what extraction wants.
+        """
         ...
 
     async def available_models(self) -> set[str]:

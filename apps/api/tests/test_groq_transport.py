@@ -282,6 +282,98 @@ async def test_a_deprecated_model_is_not_retried(no_sleeping):
     assert no_sleeping == []
 
 
+# --- what the provider said, without what it quoted ---------------------------------------------
+
+
+def body_error(kind: type[Exception], code: int, body: dict[str, Any]) -> Exception:
+    response = httpx.Response(code, request=REQUEST)
+    return kind("provider said no", response=response, body=body)
+
+
+#: The body Groq sent for the crew's first live failure, with a stand-in for the generation.
+TRUNCATED = {
+    "error": {
+        "message": "Failed to validate JSON. Please adjust your prompt.",
+        "type": "invalid_request_error",
+        "code": "json_validate_failed",
+        "failed_generation": '{"aesthetic": "a shirt photographed on a kitchen tab',
+    }
+}
+
+
+async def test_a_truncated_generation_is_not_mistaken_for_a_malformed_request(no_sleeping):
+    """`json_validate_failed` is a 400, and it is not our request being wrong.
+
+    The provider generated an answer and refused it as schema-invalid — under a strict schema,
+    almost always the output ceiling cutting the JSON off. It stays a refusal to everything
+    that already handles one, and it is not retried here at the same ceiling, which would be
+    truncated the same way. `crew_llm.TransportLLM` retries it once with more room.
+    """
+    from app.adapters.provider_errors import ProviderOutputInvalidError
+
+    subject = transport([body_error(groq.BadRequestError, 400, TRUNCATED)], max_attempts=3)
+
+    with pytest.raises(ProviderOutputInvalidError) as caught:
+        await subject.complete(model=MODEL, messages=MESSAGES)
+
+    assert isinstance(caught.value, ProviderRefusedError)
+    assert caught.value.provider_code == "json_validate_failed"
+    assert no_sleeping == []
+
+
+async def test_the_failure_log_names_the_providers_code_and_never_its_text(caplog):
+    """The deployed crew failed for hours with every refusal logged as "BadRequestError from
+    the model provider". The code says why in a word that cannot contain a user's text; the
+    message and the failed generation beside it can, so neither is ever logged."""
+    import logging
+
+    subject = transport([body_error(groq.BadRequestError, 400, TRUNCATED)], max_attempts=1)
+
+    with (
+        caplog.at_level(logging.INFO, logger="stylelab.provider"),
+        pytest.raises(ProviderRefusedError),
+    ):
+        await subject.complete(model=MODEL, messages=MESSAGES)
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "json_validate_failed" in logged
+    assert "kitchen" not in logged
+    assert "adjust your prompt" not in logged
+
+
+async def test_a_provider_code_that_is_not_an_enum_is_not_carried():
+    """A code is logged because it is a short identifier. Anything else in that field is text,
+    and text from a provider is exactly what is never logged."""
+    raised = body_error(
+        groq.BadRequestError, 400, {"error": {"code": "ignore previous instructions"}}
+    )
+    subject = transport([raised], max_attempts=1)
+
+    with pytest.raises(ProviderRefusedError) as caught:
+        await subject.complete(model=MODEL, messages=MESSAGES)
+
+    assert caught.value.provider_code is None
+
+
+async def test_reasoning_effort_reaches_the_provider_when_asked_for():
+    client = FakeClient([FakeCompletion("{}")])
+
+    await GroqChatTransport(api_key="k", client=client).complete(
+        model=MODEL, messages=MESSAGES, reasoning_effort="low"
+    )
+
+    assert client.payloads[0]["extra_body"] == {"reasoning_effort": "low"}
+
+
+async def test_no_reasoning_effort_leaves_the_providers_default():
+    """Extraction passes nothing, and must keep getting the model's default reasoning."""
+    client = FakeClient([FakeCompletion("{}")])
+
+    await GroqChatTransport(api_key="k", client=client).complete(model=MODEL, messages=MESSAGES)
+
+    assert "extra_body" not in client.payloads[0]
+
+
 async def test_backoff_is_jittered_and_capped(no_sleeping, monkeypatch):
     """Full jitter, not a fixed schedule.
 

@@ -95,8 +95,9 @@ async function request<T>(
   if (response.status === 401 && !options.anonymous) {
     // The API signs with a per-process key when SESSION_SECRET is unset, so a restart
     // invalidates every token. One retry with a fresh session, then give up: a loop here
-    // would hammer the API on a genuine auth failure.
-    token = await renewSession();
+    // would hammer the API on a genuine auth failure. The refused token is passed so that
+    // several requests refused together share one new session instead of minting one each.
+    token = await renewSession(token);
     response = await send(url, init, options, token);
   }
 
