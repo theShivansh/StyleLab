@@ -1014,11 +1014,33 @@ Fixed, each with a test that fails without it:
 Result, live, production-shaped (six agents, eight real Exa articles, real wiring): 8.1s, no
 refusals. The Style Profiler's prompt went from 3,200 to 1,724 characters.
 
+**The budget, which this entry first said to leave alone, and which the live walkthrough
+overruled.** The first composition on the deployed site ran the full crew; regenerating it three
+minutes later served the ranker. Both took ~22s end to end on the deployed plan. Reproduced through
+the real `CompositionService` with its deadline and breaker: at 15s, a first compose finished in
+13.0s and a second, 40s later, timed out — one composition asks for ~13k tokens (input plus the
+requested ceilings, which the provider counts) against 8,000 per minute, so the next one waits for
+the minute and is cancelled with all of its work. At 30s with 600-token base ceilings both runs
+served rung 1: 29.4s with a Critic rebuild, 18.8s without. So `AGENT_LATENCY_BUDGET_MS` is 30000,
+`AGENT_MAX_OUTPUT_TOKENS` is 600, and a rebuild starts only inside the first fifth of the budget,
+because the run that rebuilt finished under a second from losing everything. The web client
+already waited ~60s for a composition.
+
+**Three more defects, found by walking the deployed site rather than by any test.**
+- A photo read the provider refused as schema-invalid was classified as a refusal, so the card
+  said "We couldn't reach the model service" and offered no retry. It is `EXTRACTION_FAILED` and
+  retryable; a genuinely rejected key is still not.
+- Uploading that photo again hit the checksum cache, which answered with the failed item and a
+  job marked completed. A failed read is now run again on the same item; only a garment that was
+  actually read is served from the cache.
+- The web poller trusted "completed" and drew the card as "Read" with no garment behind it. It
+  settles on the item's own status now.
+
 Deliberately not changed:
-- The 15s budget. At `low` it holds on a free minute; a second compose inside the same minute will
-  still trip the breaker and serve rung 3, which is the ladder working. The tier is blocker B17.
 - Reasoning effort for extraction. Nothing measured says it is wrong, and vision is the product's
   front door.
+- The tier. Two composes inside one minute will still sometimes serve rung 3; that is the ladder
+  working, and the account is blocker B17.
 
 The lesson worth keeping: a live test that switches a role off to save a key has stopped testing
 the configuration that ships. The scout was the one agent production always ran and CI never did.

@@ -97,8 +97,22 @@ class Settings(BaseSettings):
 
     # --- Agent crew (docs/AGENT-SYSTEM.md) ---
     agent_framework: Literal["crewai"] = "crewai"
-    agent_latency_budget_ms: int = 15_000
-    agent_max_output_tokens: int = 800
+    #: The ceiling on one whole crew run; past it the composition is served by the ranker.
+    #:
+    #: 30s, from 15s, measured on 2026-09-14 against the deployed account through the real
+    #: composition service. At 15s the first compose finished in 13.0s and a second, 40s later,
+    #: timed out: one composition asks for ~13k tokens against 8,000 per minute, so the next
+    #: one waits for the minute and is cancelled with all of its work. On the deployed plan the
+    #: compose that succeeded took 21.6s end to end. At 30s both runs finished at rung 1 (29.4s
+    #: with a Critic rebuild, 18.8s without). The client waits about 60s for a composition.
+    agent_latency_budget_ms: int = 30_000
+    #: The base output ceiling per agent; `crew.OUTPUT_BUDGET` scales it per role.
+    #:
+    #: 600, from 800, once `agent_reasoning_effort` went to `low`: the largest answer measured
+    #: since is the Editor's 949 tokens against its 1,500. The provider counts each request's
+    #: *requested* ceiling against the per-minute limit, so unused headroom is paid for in
+    #: latency, and a truncated answer is still retried once with twice the room.
+    agent_max_output_tokens: int = 600
     #: How hard the text model reasons before it answers — for the crew's agents only.
     #:
     #: `low`, measured live on 2026-09-14 against the deployed account. The same six-agent crew

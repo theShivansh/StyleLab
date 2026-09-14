@@ -117,7 +117,11 @@ DROPPED_ROLE_RUNG: dict[str, int] = {
 #: A Critic-driven rebuild is two more calls and then the Editor. Started later than this share
 #: of the latency budget it does not finish inside it — and an overrun discards the whole crew,
 #: first draft included, for the ranker.
-REVISION_CUTOFF = 1 / 3
+#:
+#: A fifth, not a third. Measured through the composition service at a 30s budget: a run that
+#: rebuilt finished in 29.4s, under a second from losing everything, on a machine faster than
+#: the deployed one. A skipped rebuild is disclosed as rung 3; an overrun is rung 4.
+REVISION_CUTOFF = 1 / 5
 
 #: Output ceiling per role, as a multiple of `AGENT_MAX_OUTPUT_TOKENS`.
 #:

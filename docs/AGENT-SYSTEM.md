@@ -51,9 +51,12 @@ one — and why a provider outage costs a rung rather than an agent.
 
 Critical path is four sequential hops, not seven. 2‖3 and 5‖6 run in parallel.
 
-**Latency budget:** 8s p50, 15s p95, from `AGENT_LATENCY_BUDGET_MS`. Measured in S8b at
+**Latency budget:** 30s, from `AGENT_LATENCY_BUDGET_MS` (15s until S13c). Measured in S8b at
 **11.7s** for five agents on a clean provider window (1.7-3.1s each); the same crew takes
 13-26s per call once the minute's token budget is spent, which is backoff and not the model.
+S13c measured the deployed account through the real composition service: at 15s a second
+compose 40s after the first timed out every time, and at 30s both served the full crew (29.4s
+with a rebuild, 18.8s without).
 See docs/DECISIONS.md and blocker B17. Exceeding p95 twice in a
 row trips the circuit breaker (`app/services/circuit.py`) and the next composition runs
 Architect + Editor only. One run back inside budget closes it again. Groq's throughput is what
@@ -184,7 +187,7 @@ What decides whether a composition fits its budget is the account, not the model
 per minute on the text model, counting each request's input **and** its requested output
 ceiling. So prompts carry no duplicated schema (CrewAI pastes one into every task; the provider
 already enforces it) and handoffs are compact JSON. A Critic-driven rebuild adds two calls and
-waits on the same minute, so it only starts inside the first third of the budget; later than
+waits on the same minute, so it only starts inside the first fifth of the budget; later than
 that it is skipped, and the composition discloses rung 3.
 
 ## Failure and degradation
