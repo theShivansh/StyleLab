@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
-import { garmentCategory, type WardrobeItem } from "@/lib/schemas/wardrobe";
+import { garmentCategory, humanise, type WardrobeItem } from "@/lib/schemas/wardrobe";
 
 /**
  * Correcting a field the model got wrong.
@@ -83,8 +83,8 @@ export function FieldCorrection({
           <p className="text-ink-muted text-xs">
             {typeof currentValue === "string" && currentValue.length > 0
               ? wasCorrected
-                ? `Currently "${currentValue}" — you set this.`
-                : `Currently read as "${currentValue}".`
+                ? `Currently "${humanise(currentValue)}" — you set this.`
+                : `Currently read as "${humanise(currentValue)}".`
               : "Not read yet."}
           </p>
         </div>

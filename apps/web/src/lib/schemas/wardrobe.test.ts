@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { describeGarment, isHedged, wardrobeItemSchema } from "./wardrobe";
+import { describeGarment, humanise, isHedged, wardrobeItemSchema } from "./wardrobe";
 
 /**
  * Baseline tests for the invariants the whole product rests on. These are deliberately
@@ -79,6 +79,14 @@ describe("describing a garment in words", () => {
         subcategory: "sneaker",
       }),
     ).toBe("white solid color sneaker");
+  });
+
+  it("turns a single field the model wrote as an identifier into words", () => {
+    // Seen on the deployed site: a sneaker's fit rendered as `one_size` on the card, because
+    // only the garment's name went through this, not the field list.
+    expect(humanise("one_size")).toBe("one size");
+    expect(humanise("solid_color")).toBe("solid color");
+    expect(humanise("slim")).toBe("slim");
   });
 
   it("falls back to the category when there is no subcategory", () => {

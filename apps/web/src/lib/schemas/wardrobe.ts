@@ -142,7 +142,14 @@ export function describeGarment(item: {
   return parts.filter(Boolean).map(humanise).join(" ");
 }
 
-/** `solid_color` → `solid color`. Identifiers are for programs; this string is for a person. */
-function humanise(value: string | null | undefined): string {
+/**
+ * `solid_color` → `solid color`. Identifiers are for programs; this string is for a person.
+ *
+ * Exported since S13b, when the deployed site showed a sneaker's fit as `one_size`: S11 routed
+ * the garment's *name* through here and left the field list on the card, and the correction
+ * dialog's "currently read as" line, printing the stored value verbatim. Same leak, two more
+ * doors. The stored value is still untouched — this is presentation only.
+ */
+export function humanise(value: string | null | undefined): string {
   return String(value).replace(/[_-]+/g, " ").trim();
 }
