@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             data-revealed to "true", so force every reveal visible rather than shipping a
             blank page. */}
         <noscript>
-          <style>{`[data-revealed]{opacity:1 !important;transform:none !important}`}</style>
+          <style>{`[data-revealed],.stagger-word{opacity:1 !important;transform:none !important}`}</style>
         </noscript>
         <a href="#main" className="sr-only focus:not-sr-only">
           Skip to content

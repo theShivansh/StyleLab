@@ -22,6 +22,9 @@
   --color-accent-deep: #d92a66; /* 4.6:1 on white, for accent text that must pass AA */
   --color-accent-soft: #ffe7f0;
 
+  /* A warmer neutral for the hero's wash — paper, not pink. */
+  --color-bg-warm: #f1ebe3;
+
   --color-border: rgba(0, 0, 0, 0.08);
   --color-border-strong: rgba(0, 0, 0, 0.16);
 
@@ -173,6 +176,171 @@ body {
 
 [data-slot-settle="true"] > div:first-child {
   animation: slot-settle var(--duration-spatial) var(--ease-standard);
+}
+
+/* ---------------------------------------------------------------------------
+   Landing hero. Two motion moments and no more: the headline rising, and a photo being read.
+--------------------------------------------------------------------------- */
+
+/* Headline words rise from behind a mask (components/vendor/StaggerText.tsx). The hidden state
+   applies only while armed; every failure path — timer, noscript, reduced motion — ends shown. */
+.stagger-mask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  /* Room for descenders inside the mask, given back so the line height is unchanged. */
+  padding-bottom: 0.1em;
+  margin-bottom: -0.1em;
+}
+
+.stagger-word {
+  display: inline-block;
+  transition: transform var(--duration-hero) cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-stagger="armed"] .stagger-word {
+  transform: translate3d(0, 110%, 0);
+}
+
+.hero-backdrop {
+  background:
+    radial-gradient(55% 55% at 82% 32%, var(--color-accent-soft), transparent 70%),
+    radial-gradient(45% 50% at 8% 95%, var(--color-bg-warm), transparent 72%);
+  opacity: 0.85;
+}
+
+.hero-grid {
+  background-image:
+    linear-gradient(var(--color-border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-border) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 35%, #000 20%, transparent 75%);
+}
+
+/* A live dot. Pulses while something is working; still once it is done. */
+.hero-dot {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.hero-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--color-accent);
+  animation: hero-pulse 1.8s var(--ease-standard) infinite;
+}
+
+.hero-dot--still::after {
+  animation: none;
+  opacity: 0;
+}
+
+@keyframes hero-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* The read sweeping down the photograph. Decorative, and only rendered while reading. */
+.hero-scan {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 28%;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--color-accent) 18%, transparent) 80%,
+    color-mix(in srgb, var(--color-accent) 70%, transparent) 100%
+  );
+  animation: hero-scan 1.7s var(--ease-standard) infinite;
+}
+
+@keyframes hero-scan {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(360%);
+  }
+}
+
+/* A field that has just been read settles in. Transition-free on purpose: this is the one
+   place a short keyframe is safe, because the from-state is still fully readable text. */
+.hero-field {
+  animation: hero-field var(--duration-spatial) var(--ease-standard);
+}
+
+@keyframes hero-field {
+  from {
+    opacity: 0.4;
+    transform: translate3d(4px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* A short light around a card edge (components/vendor/BorderBeam.tsx, from Vengeance UI). */
+.border-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  border: calc(var(--beam-width) * 1px) solid transparent;
+  mask:
+    linear-gradient(transparent, transparent) padding-box,
+    linear-gradient(#fff, #fff) border-box;
+  mask-composite: intersect;
+}
+
+.border-beam::after {
+  content: "";
+  position: absolute;
+  aspect-ratio: 1;
+  width: calc(var(--beam-size) * 1px);
+  background: linear-gradient(to left, var(--color-accent), var(--color-accent-soft), transparent);
+  offset-anchor: calc(var(--beam-anchor) * 1%) 50%;
+  offset-path: rect(0 auto auto 0 round calc(var(--beam-size) * 1px));
+  animation: border-beam calc(var(--beam-duration) * 1s) infinite linear;
+  animation-delay: calc(var(--beam-delay) * 1s);
+}
+
+@keyframes border-beam {
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stagger-word {
+    transform: none !important;
+    transition: none !important;
+  }
+
+  .border-beam,
+  .hero-scan {
+    display: none !important;
+  }
+
+  .hero-dot::after {
+    animation: none !important;
+    opacity: 0 !important;
+  }
 }
 
 /* Screen-reader-only, paired with the a11y utilities in src/lib/a11y.ts */

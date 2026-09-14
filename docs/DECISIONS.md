@@ -955,6 +955,43 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-14 — Landing refresh: a photo being read, and the first vendored components
+
+Context:
+The operator asked for a hero that lands with a first-time visitor, using Vengeance UI, Skiper UI
+and Animmaster Lib, and for the two blank cards in "A guess is shown as a guess" to use a sample
+photograph they supplied (`data/SAMPLE.png`, a dark oxford shirt).
+
+Decision:
+- **The hero shows the product's front door.** Two columns: the promise, and beside it the
+  sample photo being read through the real extraction stages (reading photo → finding garment →
+  reading colour and cut → checking confidence → ready), fields landing with their confidence
+  marks. Labelled an interface illustration. The motion budget is two moments — the headline
+  and the read — per CLAUDE.md's "do not animate everything".
+- **The anatomy cards use the same photo**, dimmed on the "before" card. A dim photo is why the
+  model read navy as black, so the picture and the hedge now tell one story. Served as a 22 KB
+  WebP (`public/landing/oxford-shirt.webp`) through `next/image`; this is a public
+  illustration, not a user's photograph, so the optimiser-cache objection in `GarmentCard`
+  does not apply.
+- **Vendored from Vengeance UI at commit `813d9c192b1f82cb36db3d5af93c2ac7d3285ae4` (MIT):**
+  `stagger-text` → `components/vendor/StaggerText.tsx` and `border-beam` →
+  `components/vendor/BorderBeam.tsx`. Both rewritten on the way in: no `framer-motion` (a CSS
+  transition does the same work), no visibility that waits on `whileInView` alone (the
+  `Reveal` failure rule), accent tokens instead of orange-to-violet, keyframes in
+  `globals.css`, and nothing animates under reduced motion.
+- **Reviewed and not taken:** `animated-rays` (rainbow and invert filters), `perspective-grid`
+  (1,600 DOM tiles for a backdrop), `morph-text` (imports a Google Font the CSP blocks, and an
+  endless blur cycle), `interactive-hover-button` (a `lucide-react` dependency for an arrow;
+  the hero's CTA arrow is three classes).
+- **Skiper UI: nothing taken.** Its catalogue is numbered components with no public source to
+  audit, and the S2 condition — prefer Vengeance UI where both offer the pattern — held for
+  every pattern this hero needed. So no attribution line is due in the footer yet.
+- **Animmaster Lib: still rejected.** It is a paid, closed bundle delivered by Google Drive and
+  Telegram; the S2 verification gate stands. Its visual register (a scanned image, staged text)
+  informed the direction; none of its code is here.
+
+---
+
 ### 2026-09-14 — The crew was out of tokens for the day, and the transport waited anyway
 
 Context:
