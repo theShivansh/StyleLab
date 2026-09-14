@@ -279,6 +279,27 @@ class WardrobeIngestService:
             return None
 
         asset, item_id = found
+        stored = await self._work(lambda session: _stored_item(session, user_id, item_id))
+        status = stored.item.status if stored is not None else None
+
+        if status is ItemStatus.FAILED:
+            # The same photograph, and its last read failed. Uploading it again is the obvious
+            # thing to do about that, and the cache used to answer it with the failure — a job
+            # marked completed for an item with nothing in it, which the deployed site drew as
+            # "Read" beside no garment. Now it is read again, on the same item, so there is no
+            # duplicate row for the next upload of this photograph to land on.
+            job_id, _ = await self.reanalyze(user_id, item_id)
+            if job_id is None:
+                return None
+            logger.info("checksum cache hit on a failed read; reading it again")
+            return UploadOutcome(
+                status="analyzing", item_id=item_id, asset_id=asset.asset_id, job_id=job_id
+            )
+
+        if status is not ItemStatus.READY:
+            # Still being read, or no longer a garment. Neither is an answer to hand back.
+            return None
+
         job = await self._jobs.create(
             Job(
                 job_id=new_job_id(),

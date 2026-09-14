@@ -100,6 +100,27 @@ describe("pollAnalysis", () => {
     expect(outcome).toMatchObject({ kind: "failed", retryable: true });
   });
 
+  it("does not call a garment read because its job finished, when the read itself failed", async () => {
+    // The deployed site: a re-upload hit the duplicate-photo cache, the job came back
+    // completed, and the item behind it had failed. The card said "Read"; no garment appeared.
+    const d = deps({ getItem: vi.fn(async () => item("failed")) });
+
+    const outcome = await pollAnalysis(TARGET, d, signal(), LIMITS);
+
+    expect(outcome).toMatchObject({ kind: "failed", retryable: true, code: "EXTRACTION_FAILED" });
+  });
+
+  it("keeps watching an item still being read after its job says completed", async () => {
+    const statuses: WardrobeItem["status"][] = ["analyzing", "ready"];
+    const d = deps({ getItem: vi.fn(async () => item(statuses.shift() ?? "ready")) });
+
+    const outcome = await pollAnalysis(TARGET, d, signal(), LIMITS);
+
+    expect(outcome).toMatchObject({ kind: "ready" });
+    expect(d.getJob).toHaveBeenCalledTimes(1);
+    expect(d.getItem).toHaveBeenCalledTimes(2);
+  });
+
   it("rides out a passing 5xx during a rollout", async () => {
     const answers = [apiError(503), apiError(502), null];
     const d = deps({

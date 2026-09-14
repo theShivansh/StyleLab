@@ -540,6 +540,41 @@ async def test_a_deleted_item_does_not_keep_answering_from_the_cache(pipeline):
     assert second.item_id != first.item_id
 
 
+async def test_re_uploading_a_photograph_whose_read_failed_reads_it_again(pipeline, stubs):
+    """Found on the deployed site. The first read of a photograph failed; the user uploaded it
+    again, and the cache answered with the failure — a job marked completed for an empty item.
+    It is read again now, on the same item, so no duplicate row is left behind either."""
+    pipeline.transport.default = stubs.fixture("extraction_malformed.txt")
+    first = await pipeline.upload_one()
+    failed = await analyse(pipeline, first)
+    assert failed.status is JobStatus.FAILED
+
+    pipeline.transport.default = stubs.fixture("extraction_success.json")
+    second = await pipeline.upload_one()
+
+    assert second.from_cache is False
+    assert second.item_id == first.item_id
+    assert second.job_id != first.job_id
+    assert pipeline.item(first.item_id).item.status is ItemStatus.ANALYZING
+
+    job = await analyse(pipeline, second)
+
+    assert job.status is JobStatus.COMPLETED
+    assert pipeline.item(first.item_id).item.status is ItemStatus.READY
+
+
+async def test_a_photograph_still_being_read_is_not_handed_back_as_finished(pipeline):
+    """The cache's completed job is only honest for a garment that was actually read."""
+    first = await pipeline.upload_one()
+
+    second = await pipeline.upload_one()
+
+    assert second.from_cache is False
+    assert second.item_id != first.item_id
+    job = await pipeline.jobs.get(USER, second.job_id)
+    assert job.status is not JobStatus.COMPLETED
+
+
 # --- re-analysis --------------------------------------------------------------------------
 
 

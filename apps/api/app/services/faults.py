@@ -35,6 +35,7 @@ from app.adapters.provider_errors import (
     ProviderContractError,
     ProviderError,
     ProviderModelMissingError,
+    ProviderOutputInvalidError,
     ProviderRateLimitedError,
     ProviderRefusedError,
     ProviderTimeoutError,
@@ -62,6 +63,16 @@ class Fault:
 #: Kept beside the mapping so a new provider error cannot quietly pick up a default that
 #: tells the user to try again forever.
 _PROVIDER_FAULTS: dict[type[ProviderError], Fault] = {
+    # Before `ProviderRefusedError`, which it subclasses; the first match wins. The provider
+    # generated an answer and refused it as schema-invalid — usually cut off by the output
+    # ceiling. Not the user's photo and not our credentials, so not a dead end: found on the
+    # deployed site, where it arrived as a refusal and the card offered no way to try again.
+    ProviderOutputInvalidError: Fault(
+        "EXTRACTION_FAILED",
+        "Reading that photo didn't finish. Try it again.",
+        retryable=True,
+        status=502,
+    ),
     ProviderTimeoutError: Fault(
         "PROVIDER_TIMEOUT",
         "Reading that photo took too long. Try it again.",

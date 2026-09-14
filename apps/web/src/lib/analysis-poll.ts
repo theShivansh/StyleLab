@@ -130,32 +130,21 @@ export async function pollAnalysis(
         if (job.status === "completed") {
           if (!target.itemId) return missing(lastStage);
           const item = await deps.getItem(target.itemId, signal);
-          return { kind: "ready", item, stage: job.stage };
+          // A finished job is not a finished garment; the item's own status is the answer. On
+          // the deployed site a re-upload came back with a job marked completed for a photo
+          // whose read had failed, and this branch drew it as "Read" with no garment behind it.
+          const settled = settle(item, job.stage);
+          if (settled) return settled;
+          // Completed, yet still being read: watch the item from here, as for a missing job.
+          jobGone = true;
         }
       } else {
         if (!target.itemId) return missing(lastStage);
         const item = await deps.getItem(target.itemId, signal);
         transient = 0;
 
-        if (item.status === "ready") return { kind: "ready", item, stage: lastStage };
-        if (item.status === "failed") {
-          return {
-            kind: "failed",
-            message: UNREADABLE,
-            retryable: true,
-            stage: lastStage,
-            code: "EXTRACTION_FAILED",
-          };
-        }
-        if (item.status === "archived") {
-          return {
-            kind: "failed",
-            message: NO_LONGER_THERE,
-            retryable: false,
-            stage: lastStage,
-            code: "ITEM_NOT_FOUND",
-          };
-        }
+        const settled = settle(item, lastStage);
+        if (settled) return settled;
         // Still analysing, on whichever instance took the upload. Keep watching the item.
       }
     } catch (error) {
@@ -186,6 +175,30 @@ export async function pollAnalysis(
   }
 
   return { kind: "timeout" };
+}
+
+/** What an item's own status says about its card, or `null` while it is still being read. */
+function settle(item: WardrobeItem, stage: string | null): AnalysisOutcome | null {
+  if (item.status === "ready") return { kind: "ready", item, stage };
+  if (item.status === "failed") {
+    return {
+      kind: "failed",
+      message: UNREADABLE,
+      retryable: true,
+      stage,
+      code: "EXTRACTION_FAILED",
+    };
+  }
+  if (item.status === "archived") {
+    return {
+      kind: "failed",
+      message: NO_LONGER_THERE,
+      retryable: false,
+      stage,
+      code: "ITEM_NOT_FOUND",
+    };
+  }
+  return null;
 }
 
 function missing(stage: string | null): AnalysisOutcome {
