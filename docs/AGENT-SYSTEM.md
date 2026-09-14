@@ -190,6 +190,15 @@ already enforces it) and handoffs are compact JSON. A Critic-driven rebuild adds
 waits on the same minute, so it only starts inside the first fifth of the budget; later than
 that it is skipped, and the composition discloses rung 3.
 
+The minute is not the only limit. Groq's free tier also allows the text model **200,000 tokens
+per day**, refilled continuously at about 2.3 tokens a second, and a composition uses roughly
+10,000. A day of live testing spends it, and from then on every agent call is refused with
+"try again in" minutes — so the whole app, every user together, gets about one crew composition
+an hour until the allowance refills. No budget or ceiling setting changes that; the paid tier
+does. The transport does not retry a refusal whose requested wait is longer than its retries
+could reach, and the log names the limit (`limit=TPD retry_after_s=181`), so a spent day costs
+a user one second of ranker rather than the whole budget, and reads as what it is.
+
 ## Failure and degradation
 
 1. full crew

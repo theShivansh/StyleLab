@@ -17,7 +17,10 @@ uploads makes them all retry in lockstep and hit the limit together. A multi-ima
 exactly that situation.
 
 `Retry-After` is honoured when the provider sends it, capped, because a provider asking for
-a 90-second wait should not hold a request open for 90 seconds.
+a 90-second wait should not hold a request open for 90 seconds. And when the wait it asks for
+is longer than every retry left could add up to, the call fails now rather than retrying into
+the same answer: Groq's daily token limit says "try again in 3m0s", and three attempts eight
+seconds apart spent a composition's whole budget being told no.
 
 ## What is not retried here
 
@@ -86,6 +89,25 @@ def _provider_code(error: Exception) -> str | None:
     return code if isinstance(code, str) and _CODE_SHAPE.match(code) else None
 
 
+#: The limits Groq names in a rate-limit refusal: "... on tokens per day (TPD): Limit 200000".
+_LIMIT_NAMED = re.compile(r"\((TPM|TPD|RPM|RPD)\)")
+
+
+def _limit(error: Exception) -> str | None:
+    """Which of the provider's limits refused the call, as one of four fixed words.
+
+    Read out of the message, so only a match against the fixed set is ever carried — never the
+    text around it. Worth the regex because the two answers need opposite responses: a spent
+    minute comes back in seconds, a spent day in minutes to hours, and the deployed log said
+    "RateLimitError from the model provider" for both.
+    """
+    body = getattr(error, "body", None)
+    detail = body.get("error", body) if isinstance(body, dict) else None
+    message = detail.get("message") if isinstance(detail, dict) else None
+    found = _LIMIT_NAMED.search(message) if isinstance(message, str) else None
+    return found.group(1) if found else None
+
+
 def _map_error(error: Exception, *, model: str) -> ProviderError:
     """Vendor exception to our taxonomy, carrying the provider's code for the log."""
     mapped = _classify(error, model=model)
@@ -102,7 +124,7 @@ def _classify(error: Exception, *, model: str) -> ProviderError:
         return ProviderTimeoutError(_sanitised(error), model=model)
     if isinstance(error, groq.RateLimitError):
         return ProviderRateLimitedError(
-            _sanitised(error), model=model, retry_after_s=_retry_after(error)
+            _sanitised(error), model=model, retry_after_s=_retry_after(error), limit=_limit(error)
         )
     if isinstance(error, groq.NotFoundError):
         return ProviderModelMissingError(f"model {model} did not resolve", model=model)
@@ -217,7 +239,11 @@ class GroqChatTransport:
                 mapped = _map_error(error, model=model)
                 mapped.__cause__ = error
                 last = mapped
-                if not mapped.retryable or attempt == self._max_attempts:
+                if (
+                    not mapped.retryable
+                    or attempt == self._max_attempts
+                    or self._out_of_reach(mapped, attempt)
+                ):
                     self._log_failure(mapped, model=model, attempt=attempt)
                     raise mapped from error
 
@@ -225,9 +251,10 @@ class GroqChatTransport:
                 # The codes are in the message as well as `extra`, because the deployed log
                 # shows the message and nothing else.
                 logger.info(
-                    "provider call failed; retrying (code=%s provider_code=%s attempt=%d)",
+                    "provider call failed; retrying (code=%s provider_code=%s limit=%s attempt=%d)",
                     mapped.code,
                     mapped.provider_code or "-",
+                    getattr(mapped, "limit", None) or "-",
                     attempt,
                     extra={
                         "model": model,
@@ -270,6 +297,18 @@ class GroqChatTransport:
         requested = getattr(error, "retry_after_s", None) or 0.0
         return min(max(jittered, float(requested)), MAX_BACKOFF_S)
 
+    def _out_of_reach(self, error: ProviderError, attempt: int) -> bool:
+        """The provider asked for a longer wait than every retry left could add up to.
+
+        Retrying then only spends time: the capacity is not back by the last attempt, and the
+        caller — the analyzer's fallback model, a crew role that can be left out — has a better
+        use for the seconds than hearing the same refusal three times.
+        """
+        requested = getattr(error, "retry_after_s", None)
+        if not requested:
+            return False
+        return float(requested) > MAX_BACKOFF_S * (self._max_attempts - attempt)
+
     @staticmethod
     async def _sleep(seconds: float) -> None:
         import asyncio
@@ -277,10 +316,13 @@ class GroqChatTransport:
         await asyncio.sleep(seconds)
 
     def _log_failure(self, error: ProviderError, *, model: str, attempt: int) -> None:
+        retry_after = getattr(error, "retry_after_s", None)
         logger.warning(
-            "provider call failed (code=%s provider_code=%s attempts=%d)",
+            "provider call failed (code=%s provider_code=%s limit=%s retry_after_s=%s attempts=%d)",
             error.code,
             error.provider_code or "-",
+            getattr(error, "limit", None) or "-",
+            f"{retry_after:g}" if retry_after else "-",
             attempt,
             extra={
                 "model": model,

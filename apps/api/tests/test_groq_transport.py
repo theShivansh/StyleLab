@@ -392,16 +392,82 @@ async def test_backoff_is_jittered_and_capped(no_sleeping, monkeypatch):
 
 
 async def test_retry_after_is_honoured_but_capped(no_sleeping, monkeypatch):
-    """A provider asking for 90 seconds should not hold a request open for 90 seconds."""
+    """A requested wait the retries can reach is waited for, and no single wait exceeds the cap."""
     monkeypatch.setattr(groq_transport.random, "uniform", lambda _low, _high: 0.0)
     subject = transport(
-        [status_error(groq.RateLimitError, 429, **{"retry-after": "90"})], max_attempts=2
+        [
+            status_error(groq.RateLimitError, 429, **{"retry-after": "12"}),
+            FakeCompletion('{"ok": 1}'),
+        ],
+        max_attempts=3,
     )
 
-    with pytest.raises(ProviderRateLimitedError):
+    result = await subject.complete(model=MODEL, messages=MESSAGES)
+
+    assert result.content == '{"ok": 1}'
+    assert no_sleeping == [MAX_BACKOFF_S]
+
+
+#: What Groq sent for every crew call once the account's day was spent (organisation removed).
+DAY_SPENT = {
+    "error": {
+        "message": (
+            "Rate limit reached for model `openai/gpt-oss-120b` in organization `org_x` service "
+            "tier `on_demand` on tokens per day (TPD): Limit 200000, Used 199257, Requested "
+            "1161. Please try again in 3m0.576s."
+        ),
+        "type": "tokens",
+        "code": "rate_limit_exceeded",
+    }
+}
+
+
+def day_spent() -> Exception:
+    response = httpx.Response(429, headers={"retry-after": "181"}, request=REQUEST)
+    return groq.RateLimitError("provider said no", response=response, body=DAY_SPENT)
+
+
+async def test_a_wait_longer_than_the_retries_can_reach_is_not_retried(no_sleeping):
+    """Found live: three attempts eight seconds apart against "try again in 3m0s" spent a
+    composition's whole budget being told no, then served the ranker anyway."""
+    client = FakeClient([day_spent()])
+    subject = GroqChatTransport(api_key="k", client=client, max_attempts=3)
+
+    with pytest.raises(ProviderRateLimitedError) as caught:
         await subject.complete(model=MODEL, messages=MESSAGES)
 
-    assert no_sleeping == [MAX_BACKOFF_S]
+    assert len(client.payloads) == 1
+    assert no_sleeping == []
+    assert caught.value.retry_after_s == 181
+    assert caught.value.limit == "TPD"
+
+
+async def test_the_log_says_which_limit_refused_and_never_the_message(caplog):
+    import logging
+
+    subject = transport([day_spent()], max_attempts=3)
+
+    with (
+        caplog.at_level(logging.INFO, logger="stylelab.provider"),
+        pytest.raises(ProviderRateLimitedError),
+    ):
+        await subject.complete(model=MODEL, messages=MESSAGES)
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "limit=TPD" in logged
+    assert "retry_after_s=181" in logged
+    assert "org_x" not in logged
+    assert "Used 199257" not in logged
+
+
+async def test_a_limit_the_provider_did_not_name_is_not_guessed():
+    raised = body_error(groq.RateLimitError, 429, {"error": {"message": "slow down (soon)"}})
+    subject = transport([raised], max_attempts=1)
+
+    with pytest.raises(ProviderRateLimitedError) as caught:
+        await subject.complete(model=MODEL, messages=MESSAGES)
+
+    assert caught.value.limit is None
 
 
 async def test_a_malformed_retry_after_is_ignored_rather_than_crashing(no_sleeping):

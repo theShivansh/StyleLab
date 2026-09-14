@@ -144,6 +144,24 @@ async def test_the_composition_shows_the_rung_the_crew_actually_ran_at():
     assert advice.degradation_level == 3
 
 
+async def test_a_spent_day_is_named_where_the_ranker_is_served(caplog):
+    """Every deployed composition fell to the ranker with "advisor unavailable" in the log, and
+    the reason — the account's tokens for the day were gone — was only in Groq's message, which
+    is never logged. The limit and the wait are attributes, and the log line carries them."""
+    import logging
+
+    spent = ProviderRateLimitedError("no", model="eval/text", retry_after_s=181, limit="TPD")
+    transport = MockGroqProvider(by_schema=crew_script(outfit_draft=spent))
+    service = CompositionService(repository=None, advisor=crew(transport))
+
+    with caplog.at_level(logging.WARNING):
+        advice = await service.compose(U1, occasion="everyday", candidates=candidates())
+
+    assert advice.degradation_level == 4
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "advisor unavailable (AI_RATE_LIMITED limit=TPD retry_after_s=181)" in logged
+
+
 # --- a truncated answer gets one retry with more room ---------------------------------------------
 
 

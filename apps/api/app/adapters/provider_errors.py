@@ -62,10 +62,19 @@ class ProviderRateLimitedError(ProviderError):
     use_fallback_model = True
 
     def __init__(
-        self, message: str, *, model: str | None = None, retry_after_s: float | None = None
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        retry_after_s: float | None = None,
+        limit: str | None = None,
     ) -> None:
         super().__init__(message, model=model)
         self.retry_after_s = retry_after_s
+        #: Which limit refused the call — `TPM`, `TPD`, `RPM` or `RPD` — when the provider named
+        #: it. A spent minute and a spent day are both a 429, and only one passes while a person
+        #: waits.
+        self.limit = limit
 
 
 class ProviderUnavailableError(ProviderError):

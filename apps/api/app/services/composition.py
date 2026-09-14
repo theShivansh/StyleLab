@@ -209,8 +209,10 @@ class CompositionService:
             )
             self._emit("timeout", request)
             return self._degrade(request)
-        except Exception:  # provider outage, framework error
-            logger.warning("advisor unavailable; falling back to the ranker", exc_info=True)
+        except Exception as error:  # provider outage, framework error
+            logger.warning(
+                "advisor unavailable (%s); falling back to the ranker", _why(error), exc_info=True
+            )
             self.rejections.append(
                 Rejection(user_id=user_id, reason="advisor_unavailable", detail="")
             )
@@ -327,6 +329,23 @@ class CompositionService:
         the scope wrong, and the set in hand is already the authoritative one.
         """
         return self.ranker.compose(request)
+
+
+def _why(error: Exception) -> str:
+    """Why the advisor failed, from the error's attributes and never its message.
+
+    The deployed log said "advisor unavailable" for a spent day and a spent minute alike, and
+    only one of those is fixed by waiting a minute. Attributes rather than an import of the
+    provider's taxonomy, so any advisor's error reads the same way.
+    """
+    parts = [getattr(error, "code", None) or type(error).__name__]
+    limit = getattr(error, "limit", None)
+    if limit:
+        parts.append(f"limit={limit}")
+    retry_after = getattr(error, "retry_after_s", None)
+    if retry_after:
+        parts.append(f"retry_after_s={retry_after:g}")
+    return " ".join(parts)
 
 
 __all__ = ["CompositionService", "Rejection"]

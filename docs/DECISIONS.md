@@ -955,6 +955,55 @@ that test skips: a synthetic 1x1 pixel would only prove a model can describe a g
 
 ---
 
+### 2026-09-14 — The crew was out of tokens for the day, and the transport waited anyway
+
+Context:
+After S13c deployed, compositions again served the ranker. The operator raised
+`AGENT_LATENCY_BUDGET_MS` to 35000; it made no difference. The deployed log showed a
+`ProviderRateLimitedError` from inside the crew and then "generation advice provider_error" —
+the same words for every kind of rate limit.
+
+What it was:
+Reproduced locally with the deployed values (35s budget, `AGENT_MAX_OUTPUT_TOKENS=800`): the
+Architect was refused for 16s, then the ranker; a second compose was refused at every agent. The
+minute could not explain it — about 4,500 of 8,000 tokens were free after phase 1, and a lone
+2,500-token request passed. Printing Groq's 429 body locally (organisation redacted) settled it:
+**"on tokens per day (TPD): Limit 200000, Used 199257, Requested 1161. Please try again in
+3m0.576s."** A day of live testing had spent the free tier's daily allowance for the text model.
+The requested waits match a continuous refill of 200,000 / 86,400 ≈ 2.3 tokens a second, and a
+composition uses about 10,000: once the day is spent, the whole app gets roughly one crew
+composition an hour.
+
+What made it worse was ours. The transport retried every 429 three times, capping each wait at 8s,
+against refusals asking for 3 to 11 minutes. Each required role spent 16s being told no, the
+composition overran its budget, the breaker opened, and the log said only "unavailable".
+
+Decision:
+- A rate-limit refusal whose `Retry-After` is longer than every remaining retry could add up to
+  is not retried. A spent day now costs a user about a second of ranker, not the whole budget,
+  and the analyzer reaches its fallback model sooner for the same reason.
+- `ProviderRateLimitedError.limit` carries which limit refused — `TPM`, `TPD`, `RPM`, `RPD` —
+  matched against that fixed set from the provider's message, which itself is still never logged.
+  The transport's failure line, the crew's dropped-role line and the composition's ranker line
+  all name it: `advisor unavailable (AI_RATE_LIMITED limit=TPD retry_after_s=181)`.
+
+Also found in the deployed environment:
+- `AGENT_MAX_OUTPUT_TOKENS=800` was still set there, overriding the code's measured 600. It makes
+  the Editor ask for 2,000 tokens per call, which counts against both limits.
+- `CREWAI_TRACING_ENABLED=true` had been added. It does nothing: every crew passes
+  `tracing=False`, which CrewAI ranks above the variable. It should be removed rather than left
+  to say that prompts built from wardrobes may go to a third party.
+
+Deliberately not changed:
+- The tier. The paid Developer tier is the fix for the day's allowance; no code on this side can
+  make 200,000 tokens last more than about twenty compositions. Blocker B17.
+- The crew's size. Halving its tokens would buy two compositions an hour instead of one — still
+  not a demo — at the cost of roles that each change the output.
+- A client-side token bucket. It would pace the minute precisely, and the minute is not what
+  failed.
+
+---
+
 ### 2026-09-14 — Three users per upload, and a crew that never ran
 
 Context:

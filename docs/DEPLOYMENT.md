@@ -70,9 +70,12 @@ TREND_MAX_AGE_DAYS=120             # articles older than this are dropped
 
 # Agents
 AGENT_LATENCY_BUDGET_MS=30000      # 15000 timed out every second compose on an 8,000 TPM tier
-AGENT_MAX_OUTPUT_TOKENS=600
+AGENT_MAX_OUTPUT_TOKENS=600        # the Editor asks for 2.5x this; 800 asks for 2000 per call
 AGENT_REASONING_EFFORT=low         # agents only; the provider default truncated the crew's JSON
 AGENT_TREND_SCOUT_ENABLED=true
+# CREWAI_TRACING_ENABLED           leave unset. Every crew passes tracing=False, which wins over
+#                                  this; set to true it only states an intent to upload prompts
+#                                  built from users' wardrobes to a third party.
 
 # Uploads
 MAX_UPLOAD_BYTES=10485760

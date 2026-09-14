@@ -545,6 +545,8 @@ class CrewAIOutfitAdvisor:
             run.dropped_roles.append(role)
             run.degradation_level = max(run.degradation_level, DROPPED_ROLE_RUNG.get(role, 3))
             reason = getattr(error, "provider_code", None) or type(error).__name__
+            if getattr(error, "limit", None):
+                reason = f"{reason}, {error.limit} limit"  # type: ignore[union-attr]
             logger.warning(
                 "crew role %s failed and was left out (%s); serving at degradation level %d",
                 role,
