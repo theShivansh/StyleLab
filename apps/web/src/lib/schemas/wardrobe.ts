@@ -153,3 +153,19 @@ export function describeGarment(item: {
 export function humanise(value: string | null | undefined): string {
   return String(value).replace(/[_-]+/g, " ").trim();
 }
+
+/**
+ * What one field shows on screen.
+ *
+ * The model's reading is humanised; a value the user set is their words, shown exactly as they
+ * wrote them. The first S13b version humanised both, and turned a correction of "off-white"
+ * into "off white" on the live site — small, and precisely the kind of small thing that tells
+ * a person the product did not listen to them.
+ */
+export function displayValue(
+  item: { corrected_fields: readonly string[] },
+  field: string,
+  value: string,
+): string {
+  return item.corrected_fields.includes(field) ? value : humanise(value);
+}

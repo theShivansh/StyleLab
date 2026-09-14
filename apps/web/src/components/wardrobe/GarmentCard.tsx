@@ -2,7 +2,7 @@ import { Card } from "@/components/ui/Card";
 import { Chip } from "@/components/ui/Chip";
 import { cn } from "@/lib/cn";
 import { config } from "@/lib/config";
-import { describeGarment, humanise, isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
+import { describeGarment, displayValue, isHedged, type WardrobeItem } from "@/lib/schemas/wardrobe";
 
 /**
  * The product's core primitive: one garment the user owns, with the model's reading of it
@@ -84,7 +84,9 @@ export function GarmentCard({
               <div key={key} className="flex items-center justify-between gap-3 text-sm">
                 <dt className="text-ink-muted">{label}</dt>
                 <dd className="flex items-center gap-2">
-                  <span className={cn(hedged && "text-ink-muted")}>{humanise(value)}</span>
+                  <span className={cn(hedged && "text-ink-muted")}>
+                    {displayValue(item, key, value)}
+                  </span>
                   {/* `whitespace-nowrap`: the value wraps, the label must not. Since S8 the
                       material is always hedged, so this chip sits beside a long value on
                       almost every card and was breaking across two lines inside its pill. */}

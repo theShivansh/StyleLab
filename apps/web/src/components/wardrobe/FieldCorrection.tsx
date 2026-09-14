@@ -83,7 +83,7 @@ export function FieldCorrection({
           <p className="text-ink-muted text-xs">
             {typeof currentValue === "string" && currentValue.length > 0
               ? wasCorrected
-                ? `Currently "${humanise(currentValue)}" — you set this.`
+                ? `Currently "${currentValue}" — you set this.`
                 : `Currently read as "${humanise(currentValue)}".`
               : "Not read yet."}
           </p>

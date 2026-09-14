@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { describeGarment, humanise, isHedged, wardrobeItemSchema } from "./wardrobe";
+import { describeGarment, displayValue, humanise, isHedged, wardrobeItemSchema } from "./wardrobe";
 
 /**
  * Baseline tests for the invariants the whole product rests on. These are deliberately
@@ -87,6 +87,14 @@ describe("describing a garment in words", () => {
     expect(humanise("one_size")).toBe("one size");
     expect(humanise("solid_color")).toBe("solid color");
     expect(humanise("slim")).toBe("slim");
+  });
+
+  it("shows a value the user set exactly as they wrote it", () => {
+    // Also seen live: humanising a correction turned "off-white" into "off white".
+    expect(
+      displayValue({ corrected_fields: ["color_primary"] }, "color_primary", "off-white"),
+    ).toBe("off-white");
+    expect(displayValue({ corrected_fields: [] }, "fit", "one_size")).toBe("one size");
   });
 
   it("falls back to the category when there is no subcategory", () => {
